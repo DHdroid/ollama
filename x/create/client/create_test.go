@@ -748,6 +748,16 @@ func TestGetParserName(t *testing.T) {
 			want:       "laguna",
 		},
 		{
+			name:       "exaone4 model",
+			configJSON: `{"architectures": ["Exaone4ForCausalLM"], "model_type": "exaone4"}`,
+			want:       "exaone4",
+		},
+		{
+			name:       "exaone4.5 model",
+			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
+			want:       "exaone4_5",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -796,6 +806,16 @@ func TestGetRendererName(t *testing.T) {
 			name:       "laguna model",
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
+		},
+		{
+			name:       "exaone4 model",
+			configJSON: `{"architectures": ["Exaone4ForCausalLM"], "model_type": "exaone4"}`,
+			want:       "exaone4",
+		},
+		{
+			name:       "exaone4.5 model",
+			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
+			want:       "exaone4_5",
 		},
 	}
 
