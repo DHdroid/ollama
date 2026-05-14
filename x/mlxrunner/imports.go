@@ -2,6 +2,8 @@ package mlxrunner
 
 import (
 	_ "github.com/ollama/ollama/x/models/dflash"
+	_ "github.com/ollama/ollama/x/models/exaone4"
+	_ "github.com/ollama/ollama/x/models/exaone4_5"
 	_ "github.com/ollama/ollama/x/models/gemma3"
 	_ "github.com/ollama/ollama/x/models/gemma4"
 	_ "github.com/ollama/ollama/x/models/glm4_moe_lite"

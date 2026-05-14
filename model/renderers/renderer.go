@@ -97,6 +97,8 @@ func rendererForName(name string) Renderer {
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	case "laguna":
 		return &LagunaRenderer{}
+	case "exaone4", "exaone4_5":
+		return &Exaone4Renderer{}
 	default:
 		return nil
 	}

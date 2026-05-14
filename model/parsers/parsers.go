@@ -89,6 +89,8 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: true}
 	case "laguna":
 		return &LagunaParser{}
+	case "exaone4", "exaone4_5":
+		return &PassthroughParser{}
 	default:
 		return nil
 	}

@@ -814,6 +814,8 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Qwen3NextMoeForConditionalGeneration": newQwen35ImportTransform,
 	"Gemma4ForCausalLM":                    newGemma4ImportTransform,
 	"Gemma4ForConditionalGeneration":       newGemma4ImportTransform,
+	"Exaone4ForCausalLM":                   newExaone4ImportTransform,
+	"Exaone4_5_ForConditionalGeneration":   newExaone4ImportTransform,
 	"LagunaForCausalLM":                    newLagunaImportTransform,
 	"Gemma4AssistantForCausalLM":           newGemma4ImportTransform,
 }
