@@ -824,6 +824,8 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
 	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
+	"Exaone4ForCausalLM":                   newExaone4ImportTransform,
+	"Exaone4_5_ForConditionalGeneration":   newExaone4ImportTransform,
 }
 
 func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error) {
