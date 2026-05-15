@@ -67,6 +67,8 @@ type Model struct {
 	*Config
 
 	weightPrefix string
+	layouts      []TensorPathLayout
+	discard      func(string) bool
 }
 
 type Layer struct {
@@ -94,43 +96,24 @@ type MLP struct {
 	DownProj nn.LinearLayer
 }
 
-type tensorPathLayout struct {
-	containerPrefix string
-	modelPrefix     string
+type TensorPathLayout struct {
+	ContainerPrefix string
+	ModelPrefix     string
 }
 
-func (l tensorPathLayout) modelPath(suffix string) string {
-	return l.containerPrefix + l.modelPrefix + suffix
+func (l TensorPathLayout) modelPath(suffix string) string {
+	return l.ContainerPrefix + l.ModelPrefix + suffix
 }
 
 func parseConfig(configData []byte) (Config, error) {
-	var rawTop map[string]json.RawMessage
-	if err := json.Unmarshal(configData, &rawTop); err != nil {
-		return Config{}, fmt.Errorf("parse config envelope: %w", err)
-	}
-
 	var cfg Config
-	if textRaw, ok := rawTop["text_config"]; ok {
-		if err := json.Unmarshal(textRaw, &cfg); err != nil {
-			return Config{}, fmt.Errorf("parse text_config: %w", err)
-		}
-		var top struct {
-			TieWordEmbeddings *bool `json:"tie_word_embeddings"`
-			VocabSize         int32 `json:"vocab_size"`
-		}
-		if err := json.Unmarshal(configData, &top); err != nil {
-			return Config{}, fmt.Errorf("parse top-level config: %w", err)
-		}
-		if top.TieWordEmbeddings != nil {
-			cfg.TieWordEmbeddings = *top.TieWordEmbeddings
-		}
-		if cfg.VocabSize == 0 && top.VocabSize > 0 {
-			cfg.VocabSize = top.VocabSize
-		}
-	} else if err := json.Unmarshal(configData, &cfg); err != nil {
+	if err := json.Unmarshal(configData, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config: %w", err)
 	}
+	return FinalizeConfig(cfg)
+}
 
+func FinalizeConfig(cfg Config) (Config, error) {
 	if cfg.HiddenSize <= 0 {
 		return Config{}, fmt.Errorf("invalid hidden_size: %d", cfg.HiddenSize)
 	}
@@ -215,19 +198,16 @@ func buildLlama3RopeFreqs(dim int, base float32, rp *RopeParameters) *mlx.Array 
 	return arr
 }
 
-func resolveTensorPathLayout(tensors map[string]*mlx.Array) tensorPathLayout {
-	for _, layout := range []tensorPathLayout{
-		{containerPrefix: "", modelPrefix: "model."},
-		{containerPrefix: "language_model.", modelPrefix: "model."},
-		{containerPrefix: "language_model.", modelPrefix: ""},
-		{containerPrefix: "model.language_model.", modelPrefix: "model."},
-		{containerPrefix: "model.language_model.", modelPrefix: ""},
-	} {
+func resolveTensorPathLayout(tensors map[string]*mlx.Array, layouts []TensorPathLayout) TensorPathLayout {
+	if len(layouts) == 0 {
+		layouts = []TensorPathLayout{{ModelPrefix: "model."}}
+	}
+	for _, layout := range layouts {
 		if tensors[layout.modelPath("embed_tokens.weight")] != nil {
 			return layout
 		}
 	}
-	return tensorPathLayout{modelPrefix: "model."}
+	return layouts[0]
 }
 
 func isLayerSliding(layerIdx int32, cfg *Config) bool {
@@ -250,6 +230,29 @@ func NewModel(root *model.Root) (base.Model, error) {
 	cfg, err := parseConfig(configData)
 	if err != nil {
 		return nil, err
+	}
+
+	return NewModelWithConfig(root, cfg)
+}
+
+type ModelOption func(*Model)
+
+func WithTensorPathLayouts(layouts ...TensorPathLayout) ModelOption {
+	return func(m *Model) {
+		m.layouts = layouts
+	}
+}
+
+func WithDiscardTensorFunc(discard func(string) bool) ModelOption {
+	return func(m *Model) {
+		m.discard = discard
+	}
+}
+
+func NewModelWithConfig(root *model.Root, cfg Config, opts ...ModelOption) (base.Model, error) {
+	configData, err := root.Manifest.ReadConfig("config.json")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
 	}
 
 	if qt := root.QuantType(); qt != "" {
@@ -282,6 +285,12 @@ func NewModel(root *model.Root) (base.Model, error) {
 		Layers: make([]*Layer, cfg.NumHiddenLayers),
 		Config: &cfg,
 		tok:    tok,
+		layouts: []TensorPathLayout{
+			{ModelPrefix: "model."},
+		},
+	}
+	for _, opt := range opts {
+		opt(m)
 	}
 	for i := range m.Layers {
 		m.Layers[i] = &Layer{LayerIdx: int32(i), IsSliding: isLayerSliding(int32(i), &cfg)}
@@ -289,19 +298,22 @@ func NewModel(root *model.Root) (base.Model, error) {
 	return m, nil
 }
 
-func discardNonTextTensors(tensors map[string]*mlx.Array) {
+func discardTensors(tensors map[string]*mlx.Array, discard func(string) bool) {
+	if discard == nil {
+		return
+	}
 	for name := range tensors {
-		if strings.HasPrefix(name, "mtp.") || strings.HasPrefix(name, "model.visual.") || strings.HasPrefix(name, "visual.") {
+		if discard(name) {
 			delete(tensors, name)
 		}
 	}
 }
 
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
-	discardNonTextTensors(tensors)
-	layout := resolveTensorPathLayout(tensors)
-	m.weightPrefix = layout.containerPrefix
-	modelPrefix := layout.containerPrefix + layout.modelPrefix
+	discardTensors(tensors, m.discard)
+	layout := resolveTensorPathLayout(tensors, m.layouts)
+	m.weightPrefix = layout.ContainerPrefix
+	modelPrefix := layout.ContainerPrefix + layout.ModelPrefix
 	linears := model.NewLinearFactory(tensors, m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
 
 	embedTokens := model.MakeEmbeddingLayer(tensors, modelPrefix+"embed_tokens", m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
@@ -318,7 +330,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 	if m.TieWordEmbeddings {
 		m.LMHead = m.EmbedTokens.AsLinear()
-	} else if lmHead := linears.Make(layout.containerPrefix + "lm_head"); lmHead != nil {
+	} else if lmHead := linears.Make(layout.ContainerPrefix + "lm_head"); lmHead != nil {
 		m.LMHead = lmHead
 	} else if lmHead := linears.Make("lm_head"); lmHead != nil {
 		m.LMHead = lmHead
