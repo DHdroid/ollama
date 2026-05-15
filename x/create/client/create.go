@@ -662,6 +662,7 @@ func supportsThinking(modelDir string) bool {
 	thinkingArchitectures := []string{
 		"glm4moe",  // GLM-4 MoE models
 		"deepseek", // DeepSeek models
+		"exaone4",  // EXAONE 4.x models
 		"qwen3",    // Qwen3 models
 	}
 
