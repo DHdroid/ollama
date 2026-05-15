@@ -794,7 +794,7 @@ func TestGetParserName(t *testing.T) {
 			want:       "exaone4",
 		},
 		{
-			name:       "exaone4.5 model",
+			name:       "exaone4_5 model",
 			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
 			want:       "exaone4_5",
 		},
@@ -854,7 +854,7 @@ func TestGetRendererName(t *testing.T) {
 			want:       "exaone4",
 		},
 		{
-			name:       "exaone4.5 model",
+			name:       "exaone4_5 model",
 			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
 			want:       "exaone4_5",
 		},

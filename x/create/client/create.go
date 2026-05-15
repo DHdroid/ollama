@@ -757,7 +757,7 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
-		if strings.Contains(archLower, "exaone4_5") || strings.Contains(archLower, "exaone4.5") {
+		if strings.Contains(archLower, "exaone4_5") {
 			return "exaone4_5"
 		}
 		if strings.Contains(archLower, "exaone") {
@@ -783,7 +783,7 @@ func getParserName(modelDir string) string {
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
 		}
-		if strings.Contains(typeLower, "exaone4_5") || strings.Contains(typeLower, "exaone4.5") {
+		if strings.Contains(typeLower, "exaone4_5") {
 			return "exaone4_5"
 		}
 		if strings.Contains(typeLower, "exaone") {
@@ -829,7 +829,7 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3-coder"
 		}
-		if strings.Contains(archLower, "exaone4_5") || strings.Contains(archLower, "exaone4.5") {
+		if strings.Contains(archLower, "exaone4_5") {
 			return "exaone4_5"
 		}
 		if strings.Contains(archLower, "exaone") {
@@ -855,7 +855,7 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3-coder"
 		}
-		if strings.Contains(typeLower, "exaone4_5") || strings.Contains(typeLower, "exaone4.5") {
+		if strings.Contains(typeLower, "exaone4_5") {
 			return "exaone4_5"
 		}
 		if strings.Contains(typeLower, "exaone") {
