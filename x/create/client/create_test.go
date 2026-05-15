@@ -340,6 +340,22 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 			want: []string{"completion", "vision", "thinking"},
 		},
 		{
+			name: "exaone4 text model",
+			configJSON: `{
+				"architectures": ["Exaone4ForCausalLM"],
+				"model_type": "exaone4"
+			}`,
+			want: []string{"completion", "thinking"},
+		},
+		{
+			name: "exaone4_5 text model",
+			configJSON: `{
+				"architectures": ["Exaone4_5_ForConditionalGeneration"],
+				"model_type": "exaone4_5"
+			}`,
+			want: []string{"completion", "thinking"},
+		},
+		{
 			name: "model with audio config",
 			configJSON: `{
 				"architectures": ["Gemma4ForConditionalGeneration"],
@@ -613,6 +629,16 @@ func TestSupportsThinking(t *testing.T) {
 			want:       true,
 		},
 		{
+			name:       "exaone4 architecture",
+			configJSON: `{"architectures": ["Exaone4ForCausalLM"], "model_type": "exaone4"}`,
+			want:       true,
+		},
+		{
+			name:       "exaone4_5 architecture",
+			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
+			want:       true,
+		},
+		{
 			name:       "llama architecture (no thinking)",
 			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
 			want:       false,
@@ -677,6 +703,16 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			name:       "functiongemma tools only",
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
+		},
+		{
+			name:       "exaone4 tools and thinking",
+			parserName: "exaone4",
+			want:       []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:       "exaone4_5 tools and thinking",
+			parserName: "exaone4_5",
+			want:       []string{"completion", "tools", "thinking"},
 		},
 	}
 
