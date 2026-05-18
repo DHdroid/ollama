@@ -280,6 +280,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"bert",
 		"deepseek2",
 		"deepseekocr",
+		"exaone4", "exaone4_5",
 		"gemma3",
 		"gemma3n",
 		"gemma4",

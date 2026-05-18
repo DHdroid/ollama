@@ -166,6 +166,9 @@ func NewTextProcessor(s string) (tokenizer.Tokenizer, error) {
 
 func modelForArch(c fs.Config) (Model, error) {
 	arch := c.Architecture()
+	if arch == "exaone4" && isExaone45(c) {
+		arch = "exaone4_5"
+	}
 	if pooling.Type(c.Uint("pooling_type")) != pooling.TypeNone {
 		arch = arch + "_embed"
 	}
@@ -176,6 +179,10 @@ func modelForArch(c fs.Config) (Model, error) {
 	}
 
 	return f(c)
+}
+
+func isExaone45(c fs.Config) bool {
+	return strings.Contains(strings.ToLower(c.String("general.basename")+" "+c.String("general.name")), "exaone-4.5")
 }
 
 func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {

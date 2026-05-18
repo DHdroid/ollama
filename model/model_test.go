@@ -225,8 +225,13 @@ func TestModelForArch(t *testing.T) {
 		Model
 	}
 
+	type fakeExaone45Model struct {
+		Model
+	}
+
 	models["model"] = func(c fs.Config) (Model, error) { return fakeModel{}, nil }
 	models["model_embed"] = func(c fs.Config) (Model, error) { return fakeEmbeddingModel{}, nil }
+	models["exaone4_5"] = func(c fs.Config) (Model, error) { return fakeExaone45Model{}, nil }
 
 	cases := []struct {
 		name   string
@@ -248,6 +253,14 @@ func TestModelForArch(t *testing.T) {
 				"model.pooling_type":   uint32(1),
 			},
 			want: fakeEmbeddingModel{},
+		},
+		{
+			name: "exaone 4.5 gguf alias",
+			config: fsggml.KV{
+				"general.architecture": "exaone4",
+				"general.basename":     "EXAONE-4.5",
+			},
+			want: fakeExaone45Model{},
 		},
 		{
 			name: "unsupported",
