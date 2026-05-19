@@ -489,6 +489,11 @@ func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 	return ggml.KV{}, fmt.Errorf("no base model was found")
 }
 
+func isEXAONE45GGUF(kv ggml.KV) bool {
+	name := strings.ToLower(kv.String("general.basename") + " " + kv.String("general.name"))
+	return strings.Contains(name, "exaone-4.5")
+}
+
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
 	var layers []manifest.Layer
 	for _, layer := range baseLayers {
@@ -540,6 +545,20 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
 					config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 					config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
+				case "exaone4", "exaone4_5":
+					name := "exaone4"
+					if arch == "exaone4_5" || isEXAONE45GGUF(layer.GGML.KV()) {
+						name = "exaone4_5"
+					}
+					config.Renderer = cmp.Or(config.Renderer, name)
+					config.Parser = cmp.Or(config.Parser, name)
+					if len(config.Capabilities) == 0 {
+						config.Capabilities = []string{
+							model.CapabilityCompletion.String(),
+							model.CapabilityTools.String(),
+							model.CapabilityThinking.String(),
+						}
+					}
 				}
 			}
 		}

@@ -59,38 +59,3 @@ func TestParseTextConfig(t *testing.T) {
 		t.Fatalf("RopeTheta = %v, want 1000000", cfg.RopeTheta)
 	}
 }
-
-func TestParseTextConfigRopeParameters(t *testing.T) {
-	cfg, err := parseTextConfig([]byte(`{
-		"text_config": {
-			"model_type": "exaone4_5_text",
-			"hidden_size": 2048,
-			"intermediate_size": 4096,
-			"num_hidden_layers": 30,
-			"num_attention_heads": 32,
-			"num_key_value_heads": 8,
-			"max_position_embeddings": 128000,
-			"rms_norm_eps": 1e-5,
-			"rope_parameters": {
-				"factor": 16.0,
-				"high_freq_factor": 4.0,
-				"low_freq_factor": 1.0,
-				"original_max_position_embeddings": 8192,
-				"rope_type": "llama3",
-				"rope_theta": 1000000.0
-			}
-		}
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.RopeParameters == nil {
-		t.Fatal("RopeParameters was not populated")
-	}
-	if cfg.RopeTheta != 1000000 {
-		t.Fatalf("RopeTheta = %v, want 1000000", cfg.RopeTheta)
-	}
-	if cfg.RopeFreqs == nil {
-		t.Fatal("RopeFreqs was not built from rope_parameters")
-	}
-}

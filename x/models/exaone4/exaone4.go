@@ -42,6 +42,7 @@ type Config struct {
 	RMSNormEps            float32         `json:"rms_norm_eps"`
 	RopeTheta             float32         `json:"rope_theta"`
 	RopeParameters        *RopeParameters `json:"rope_parameters"`
+	RopeScaling           *RopeParameters `json:"rope_scaling"`
 	SlidingWindow         int32           `json:"sliding_window"`
 	SlidingWindowPattern  string          `json:"sliding_window_pattern"`
 	LayerTypes            []string        `json:"layer_types"`
@@ -135,6 +136,9 @@ func FinalizeConfig(cfg Config) (Config, error) {
 	cfg.HeadDim = cfg.HiddenSize / cfg.NumAttentionHeads
 	if cfg.RMSNormEps == 0 {
 		cfg.RMSNormEps = 1e-5
+	}
+	if cfg.RopeParameters == nil {
+		cfg.RopeParameters = cfg.RopeScaling
 	}
 	if cfg.RopeParameters != nil && cfg.RopeParameters.RopeTheta > 0 {
 		cfg.RopeTheta = cfg.RopeParameters.RopeTheta

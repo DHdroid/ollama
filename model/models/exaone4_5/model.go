@@ -79,7 +79,3 @@ func exaone45Tokenizer(c fs.Config) tokenizer.Tokenizer {
 
 	return tokenizer.NewBytePairEncoding(&vocabulary)
 }
-
-func init() {
-	model.Register("exaone4_5", New)
-}

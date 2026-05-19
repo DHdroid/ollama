@@ -1,7 +1,6 @@
 package exaone4
 
 import (
-	"cmp"
 	"fmt"
 	"math"
 
@@ -18,6 +17,8 @@ import (
 const (
 	cacheTypeSWA = iota
 	cacheTypeCausal
+
+	cacheRecurrentSeqLen = 4096
 )
 
 type RopePolicy func(layer int) bool
@@ -26,8 +27,7 @@ type Options struct {
 	hiddenSize,
 	numHeads,
 	numKVHeads,
-	keyLength,
-	valueLength int
+	headSize int
 
 	eps,
 	ropeBase float32
@@ -37,7 +37,7 @@ type Options struct {
 }
 
 func (o Options) headDim() int {
-	return cmp.Or(o.keyLength, o.valueLength, o.hiddenSize/o.numHeads)
+	return o.headSize
 }
 
 func (o Options) isSWA(layer int) bool {
@@ -184,10 +184,6 @@ func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tenso
 var _ model.Model = (*Model)(nil)
 
 func New(c fs.Config) (model.Model, error) {
-	return New4(c)
-}
-
-func New4(c fs.Config) (model.Model, error) {
 	if c.String("tokenizer.ggml.model") != "gpt2" {
 		return nil, fmt.Errorf("unsupported tokenizer: %s", c.String("tokenizer.ggml.model"))
 	}
@@ -199,6 +195,10 @@ func New4(c fs.Config) (model.Model, error) {
 }
 
 func NewTextModel(c fs.Config, t tokenizer.Tokenizer, useRoPE RopePolicy) *Model {
+	hiddenSize := int(c.Uint("embedding_length"))
+	numHeads := int(c.Uint("attention.head_count"))
+	headDim := int(c.Uint("attention.key_length", uint32(hiddenSize/numHeads)))
+
 	slidingWindowPattern := c.Bools("attention.sliding_window_pattern")
 	if useRoPE == nil && len(slidingWindowPattern) > 0 {
 		useRoPE = func(layer int) bool {
@@ -210,11 +210,10 @@ func NewTextModel(c fs.Config, t tokenizer.Tokenizer, useRoPE RopePolicy) *Model
 		Tokenizer: t,
 		Layers:    make([]Layer, c.Uint("block_count")),
 		Options: &Options{
-			hiddenSize:           int(c.Uint("embedding_length")),
-			numHeads:             int(c.Uint("attention.head_count")),
+			hiddenSize:           hiddenSize,
+			numHeads:             numHeads,
 			numKVHeads:           int(c.Uint("attention.head_count_kv")),
-			keyLength:            int(c.Uint("attention.key_length")),
-			valueLength:          int(c.Uint("attention.value_length")),
+			headSize:             headDim,
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:             c.Float("rope.freq_base"),
 			slidingWindowPattern: slidingWindowPattern,
@@ -227,7 +226,7 @@ func ConfigureCache(m *Model, c fs.Config) {
 	if m.Options.hasSWA() {
 		slidingWindowLen := int32(c.Uint("attention.sliding_window"))
 		m.Cache = kvcache.NewWrapperCache(
-			kvcache.NewSWAMemCache(slidingWindowLen, 4096, m.Shift),
+			kvcache.NewSWAMemCache(slidingWindowLen, cacheRecurrentSeqLen, m.Shift),
 			kvcache.NewCausalCache(m.Shift),
 		)
 	} else {
@@ -250,8 +249,4 @@ func exaone4Tokenizer(c fs.Config) tokenizer.Tokenizer {
 	}
 
 	return tokenizer.NewBytePairEncoding(&vocabulary)
-}
-
-func init() {
-	model.Register("exaone4", New)
 }
