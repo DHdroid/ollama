@@ -6,10 +6,21 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type Exaone45Renderer struct{}
+type Exaone45Renderer struct {
+	useImgTags bool
+}
+
+func (r *Exaone45Renderer) renderContent(message api.Message, imageOffset int) (string, int) {
+	content := strings.TrimSpace(message.Content)
+	if r.useImgTags {
+		return renderContentWithImageTags(content, len(message.Images), imageOffset)
+	}
+	return content, imageOffset
+}
 
 func (r *Exaone45Renderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	var sb strings.Builder
+	imageOffset := 0
 	if len(tools) > 0 {
 		sb.WriteString("<|tool_declare|>\n")
 		if err := writeExaone45Tools(&sb, tools); err != nil {
@@ -19,7 +30,8 @@ func (r *Exaone45Renderer) Render(messages []api.Message, tools []api.Tool, thin
 	}
 
 	for i, message := range messages {
-		content := strings.TrimSpace(message.Content)
+		content, nextImageOffset := r.renderContent(message, imageOffset)
+		imageOffset = nextImageOffset
 		if i == 0 && message.Role == "system" {
 			sb.WriteString("<|system|>\n")
 			sb.WriteString(content)

@@ -92,6 +92,19 @@ func TestExaone45RendererMatchesOfficialTemplate(t *testing.T) {
 	}
 }
 
+func TestExaone45RendererWithImageTags(t *testing.T) {
+	renderer := &Exaone45Renderer{useImgTags: true}
+	got, err := renderer.Render([]api.Message{{Role: "user", Content: "Describe this image.", Images: []api.ImageData{api.ImageData("img")}}}, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "<|user|>\n[img-0] Describe this image.<|endofturn|>\n<|assistant|>\n<think>\n\n</think>\n\n"
+	if got != want {
+		t.Fatalf("rendered prompt mismatch\nwant: %q\n got: %q", want, got)
+	}
+}
+
 func TestExaoneRendererRegistryUsesSeparateRenderers(t *testing.T) {
 	if _, ok := rendererForName("exaone4").(*Exaone4Renderer); !ok {
 		t.Fatalf("exaone4 renderer = %T, want *Exaone4Renderer", rendererForName("exaone4"))
