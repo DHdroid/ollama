@@ -38,7 +38,7 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	t := exaone45Tokenizer(c)
-	languageModel := exaone4.NewTextModel(c, t, exaone45UseRoPE(c))
+	languageModel := exaone4.NewTextModel(c, t, nil)
 	exaone4.ConfigureCache(languageModel, c)
 
 	m := &Model{
@@ -119,17 +119,6 @@ func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	}
 
 	return result, nil
-}
-
-func exaone45UseRoPE(c fs.Config) exaone4.RopePolicy {
-	pattern := c.Bools("attention.sliding_window_pattern")
-	if len(pattern) == 0 {
-		return nil
-	}
-
-	return func(layer int) bool {
-		return layer < len(pattern) && pattern[layer]
-	}
 }
 
 func exaone45Tokenizer(c fs.Config) tokenizer.Tokenizer {

@@ -280,6 +280,10 @@ func (m *VisionModel) windowIndex(grid *Grid) (index []int32, bounds []int) {
 
 func newVisionModel(c fs.Config) *VisionModel {
 	blockCount := c.Uint("vision.block_count", 0)
+	if blockCount == 0 {
+		return nil
+	}
+
 	hiddenSize := int(c.Uint("vision.embedding_length", 0))
 	numHeads := int(c.Uint("vision.attention.head_count", 1))
 	numKVHeads := int(c.Uint("vision.attention.head_count_kv", uint32(numHeads)))
