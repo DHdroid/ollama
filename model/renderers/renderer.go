@@ -110,7 +110,7 @@ func rendererForName(name string) Renderer {
 	case "exaone4":
 		return &Exaone4Renderer{}
 	case "exaone4_5":
-		return &Exaone45Renderer{}
+		return &Exaone45Renderer{useImgTags: RenderImgTags}
 	default:
 		return nil
 	}
