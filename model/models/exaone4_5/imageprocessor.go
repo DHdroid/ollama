@@ -89,15 +89,10 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error)
 		Temporal: 1,
 	}
 
-	patches, err := p.createPatches(normalizedPixels, resizedHeight, resizedWidth, grid)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create patches: %w", err)
-	}
-
-	return patches, grid, nil
+	return p.createPatches(normalizedPixels, resizedHeight, resizedWidth, grid), grid, nil
 }
 
-func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid *Grid) ([]float32, error) {
+func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid *Grid) []float32 {
 	channels := p.numChannels
 	patchSize := p.patchSize
 	mergeSize := p.mergeSize
@@ -153,5 +148,5 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 		}
 	}
 
-	return result, nil
+	return result
 }

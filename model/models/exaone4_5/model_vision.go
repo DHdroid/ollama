@@ -210,32 +210,23 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	hiddenStates = hiddenStates.Rows(ctx, windowIndex.Argsort(ctx))
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0)/spatialMergeUnit, hiddenStates.Dim(1)*spatialMergeUnit)
 
-	positions := ctx.Input().FromInts(func() []int32 {
-		zero := make([]int32, grid.Height*grid.Width)
-		s := [][]int32{
-			make([]int32, grid.Height*grid.Width),
-			make([]int32, grid.Height*grid.Width),
-			zero,
-			zero,
-		}
-
-		var cur int
-		for y := 0; y < grid.Height; y += m.spatialMergeSize {
-			for x := 0; x < grid.Width; x += m.spatialMergeSize {
-				for dy := range m.spatialMergeSize {
-					for dx := range m.spatialMergeSize {
-						i := int(index[cur/spatialMergeUnit]) * spatialMergeUnit
-						i += cur % spatialMergeUnit
-						s[0][i] = int32(y + dy)
-						s[1][i] = int32(x + dx)
-						cur++
-					}
+	section := grid.Height * grid.Width
+	positionData := make([]int32, section*4)
+	var cur int
+	for y := 0; y < grid.Height; y += m.spatialMergeSize {
+		for x := 0; x < grid.Width; x += m.spatialMergeSize {
+			for dy := range m.spatialMergeSize {
+				for dx := range m.spatialMergeSize {
+					i := int(index[cur/spatialMergeUnit]) * spatialMergeUnit
+					i += cur % spatialMergeUnit
+					positionData[i] = int32(y + dy)
+					positionData[section+i] = int32(x + dx)
+					cur++
 				}
 			}
 		}
-
-		return slices.Concat(s...)
-	}(), grid.Height*grid.Width*4)
+	}
+	positions := ctx.Input().FromInts(positionData, len(positionData))
 
 	mask := blockDiagonalMask(ctx, hiddenStates.Dim(1), bounds)
 	for i, layer := range m.Layers {
