@@ -149,6 +149,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
+	return m.ForwardWithHiddenStates(ctx, batch, positions, hiddenStates)
+}
+
+func (m *Model) ForwardWithHiddenStates(ctx ml.Context, batch input.Batch, positions, hiddenStates ml.Tensor) (ml.Tensor, error) {
 	for i, layer := range m.Layers {
 		if m.Cache != nil {
 			m.Cache.SetLayer(i)

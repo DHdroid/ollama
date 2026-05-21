@@ -1,7 +1,9 @@
 package exaone4_5
 
 import (
+	"bytes"
 	"fmt"
+	"image"
 	"strings"
 
 	"github.com/ollama/ollama/fs"
@@ -19,10 +21,16 @@ type Model struct {
 	tokenizer.Tokenizer
 
 	LanguageModel *exaone4.Model
-	VisionModel   any
+	*VisionModel  `gguf:"v,alt:visual"`
+	ImageProcessor
+
+	imageToken  int32
+	visionStart int32
+	visionEnd   int32
 }
 
 var _ model.Model = (*Model)(nil)
+var _ model.MultimodalProcessor = (*Model)(nil)
 
 func New(c fs.Config) (model.Model, error) {
 	if c.String("tokenizer.ggml.model") != "gpt2" {
@@ -34,15 +42,83 @@ func New(c fs.Config) (model.Model, error) {
 	exaone4.ConfigureCache(languageModel, c)
 
 	m := &Model{
-		Tokenizer:     t,
-		LanguageModel: languageModel,
+		Tokenizer:      t,
+		LanguageModel:  languageModel,
+		VisionModel:    newVisionModel(c),
+		ImageProcessor: newImageProcessor(c),
+		imageToken:     tokenID(c, "<|image_pad|>", 67),
+		visionStart:    tokenID(c, "<vision>", 73),
+		visionEnd:      tokenID(c, "</vision>", 74),
 	}
 	m.Cache = languageModel.Cache
 	return m, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	return m.LanguageModel.Forward(ctx, batch)
+	if len(batch.Multimodal) == 0 {
+		return m.LanguageModel.Forward(ctx, batch)
+	}
+
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	hiddenStates := m.LanguageModel.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)
+
+	for _, mi := range batch.Multimodal {
+		img := mi.Multimodal[0].Tensor
+		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
+	}
+
+	return m.LanguageModel.ForwardWithHiddenStates(ctx, batch, positions, hiddenStates)
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	if m.VisionModel == nil || len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
+	}
+
+	f32s, grid, err := m.ImageProcessor.ProcessImage(img)
+	if err != nil {
+		return nil, err
+	}
+
+	patchDim := m.numChannels * m.temporalPatchSize * m.patchSize * m.patchSize
+	numPatches := grid.Temporal * grid.Height * grid.Width
+	pixelValues := ctx.Input().FromFloats(f32s, patchDim, numPatches)
+
+	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
+	return []input.Multimodal{{Tensor: visionOutputs, Data: grid}}, nil
+}
+
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
+
+	for _, inp := range inputs {
+		if len(inp.Multimodal) == 0 {
+			result = append(result, inp)
+			continue
+		}
+
+		tokensPerGrid := inp.Multimodal[0].Tensor.Dim(1)
+		result = append(result, &input.Input{Token: m.visionStart})
+		result = append(result, &input.Input{
+			Token:          m.imageToken,
+			Multimodal:     inp.Multimodal,
+			MultimodalHash: inp.MultimodalHash,
+			SameBatch:      tokensPerGrid,
+		})
+
+		for range tokensPerGrid - 1 {
+			result = append(result, &input.Input{Token: m.imageToken})
+		}
+
+		result = append(result, &input.Input{Token: m.visionEnd})
+	}
+
+	return result, nil
 }
 
 func exaone45UseRoPE(c fs.Config) exaone4.RopePolicy {
@@ -78,4 +154,14 @@ func exaone45Tokenizer(c fs.Config) tokenizer.Tokenizer {
 	}
 
 	return tokenizer.NewBytePairEncoding(&vocabulary)
+}
+
+func tokenID(c fs.Config, token string, fallback int32) int32 {
+	for i, value := range c.Strings("tokenizer.ggml.tokens") {
+		if value == token {
+			return int32(i)
+		}
+	}
+
+	return fallback
 }
