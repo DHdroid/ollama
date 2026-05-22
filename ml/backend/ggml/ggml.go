@@ -1740,8 +1740,12 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 		}
 
 		if mask != nil {
-			if mask.DType() != cacheConfig.MaskDType {
-				mask = mask.Cast(ctx, cacheConfig.MaskDType)
+			maskDType := cacheConfig.MaskDType
+			if maskDType == ml.DTypeOther {
+				maskDType = ml.DTypeF32
+			}
+			if mask.DType() != maskDType {
+				mask = mask.Cast(ctx, maskDType)
 			}
 		}
 	}
