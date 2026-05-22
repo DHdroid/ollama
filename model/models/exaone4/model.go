@@ -210,6 +210,8 @@ func NewTextModel(c fs.Config, t tokenizer.Tokenizer, useRoPE RopePolicy) *Model
 	headDim := int(c.Uint("attention.key_length", uint32(hiddenSize/numHeads)))
 
 	slidingWindowPattern := c.Bools("attention.sliding_window_pattern")
+	// GGUF stores MTP/NextN layers as additional trailing blocks.
+	// Skip them for normal decoding until MTP execution is implemented.
 	mainLayerCount := int(c.Uint("block_count")) - int(c.Uint("nextn_predict_layers"))
 	if mainLayerCount <= 0 {
 		mainLayerCount = int(c.Uint("block_count"))
