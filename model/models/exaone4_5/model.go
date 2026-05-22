@@ -154,3 +154,7 @@ func tokenID(c fs.Config, token string, fallback int32) int32 {
 
 	return fallback
 }
+
+func init() {
+	model.Register("exaone4_5", New)
+}

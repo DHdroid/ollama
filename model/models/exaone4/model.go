@@ -249,6 +249,10 @@ func ConfigureCache(m *Model, c fs.Config) {
 	}
 }
 
+func init() {
+	model.Register("exaone4", New)
+}
+
 func exaone4Tokenizer(c fs.Config) tokenizer.Tokenizer {
 	vocabulary := tokenizer.Vocabulary{
 		Values: c.Strings("tokenizer.ggml.tokens"),
