@@ -33,7 +33,6 @@ type Options struct {
 	ropeBase float32
 
 	slidingWindowPattern []bool
-	mainLayerCount       int
 	UseRoPE              RopePolicy
 }
 
@@ -154,12 +153,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 }
 
 func (m *Model) ForwardWithHiddenStates(ctx ml.Context, batch input.Batch, positions, hiddenStates ml.Tensor) (ml.Tensor, error) {
-	mainLayerCount := m.Options.mainLayerCount
-	if mainLayerCount <= 0 || mainLayerCount > len(m.Layers) {
-		mainLayerCount = len(m.Layers)
-	}
-
-	for i, layer := range m.Layers[:mainLayerCount] {
+	for i, layer := range m.Layers {
 		if m.Cache != nil {
 			m.Cache.SetLayer(i)
 			if m.Options.hasSWA() {
@@ -172,7 +166,7 @@ func (m *Model) ForwardWithHiddenStates(ctx ml.Context, batch input.Batch, posit
 		}
 
 		var outputs ml.Tensor
-		if i == mainLayerCount-1 {
+		if i == len(m.Layers)-1 {
 			outputs = batch.Outputs
 		}
 
@@ -210,12 +204,6 @@ func NewTextModel(c fs.Config, t tokenizer.Tokenizer, useRoPE RopePolicy) *Model
 	headDim := int(c.Uint("attention.key_length", uint32(hiddenSize/numHeads)))
 
 	slidingWindowPattern := c.Bools("attention.sliding_window_pattern")
-	// GGUF stores MTP/NextN layers as additional trailing blocks.
-	// Skip them for normal decoding until MTP execution is implemented.
-	mainLayerCount := int(c.Uint("block_count")) - int(c.Uint("nextn_predict_layers"))
-	if mainLayerCount <= 0 {
-		mainLayerCount = int(c.Uint("block_count"))
-	}
 	if useRoPE == nil && len(slidingWindowPattern) > 0 {
 		useRoPE = func(layer int) bool {
 			return layer < len(slidingWindowPattern) && slidingWindowPattern[layer]
@@ -233,7 +221,6 @@ func NewTextModel(c fs.Config, t tokenizer.Tokenizer, useRoPE RopePolicy) *Model
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:             c.Float("rope.freq_base"),
 			slidingWindowPattern: slidingWindowPattern,
-			mainLayerCount:       mainLayerCount,
 			UseRoPE:              useRoPE,
 		},
 	}
