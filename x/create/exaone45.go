@@ -15,7 +15,7 @@ func newExaone45ImportTransform(string, sourceModelConfig) (tensorImportTransfor
 }
 
 func (exaone45ImportTransform) skipTensor(name string) bool {
-	return strings.HasPrefix(name, "mtp.") || strings.HasPrefix(name, "model.visual.") || strings.HasPrefix(name, "visual.")
+	return strings.HasPrefix(name, "model.visual.") || strings.HasPrefix(name, "visual.")
 }
 
 func (t exaone45ImportTransform) transformTensor(td *safetensors.TensorData) ([]*safetensors.TensorData, error) {

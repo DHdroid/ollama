@@ -7,6 +7,10 @@ import (
 )
 
 var _ base.Model = (*Model)(nil)
+var _ base.MTPEmbeddingModel = (*Model)(nil)
+var _ base.DraftModel = (*MTPModel)(nil)
+var _ base.MTPDraftModel = (*MTPModel)(nil)
+var _ base.CachedMTPDraftModel = (*MTPModel)(nil)
 
 func TestParseTextConfig(t *testing.T) {
 	cfg, err := parseTextConfig([]byte(`{
@@ -57,5 +61,12 @@ func TestParseTextConfig(t *testing.T) {
 	}
 	if cfg.RopeTheta != 1000000 {
 		t.Fatalf("RopeTheta = %v, want 1000000", cfg.RopeTheta)
+	}
+}
+
+func TestMTPDraftDefaults(t *testing.T) {
+	defaults := (&Model{}).MTPDraftDefaults(false)
+	if !defaults.Enabled || defaults.InitialDraftTokens != 3 || defaults.MaxDraftTokens != 3 {
+		t.Fatalf("MTPDraftDefaults = %+v, want enabled initial=3 max=3", defaults)
 	}
 }

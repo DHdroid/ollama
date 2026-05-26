@@ -46,10 +46,17 @@ type MTPDefaultsProvider interface {
 	MTPDraftDefaults(sample bool) MTPDefaults
 }
 
-// MTPDraftModel is a draft model capable of Gemma-style multi-token
-// prediction from target token embeddings, target hidden states, and target KV.
+// MTPDraftModel is a draft model capable of multi-token prediction from target
+// token embeddings and target hidden states.
 type MTPDraftModel interface {
 	Draft(inputEmbeds *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array)
+}
+
+// CachedMTPDraftModel is an MTP draft model with its own attention KV cache.
+type CachedMTPDraftModel interface {
+	MTPDraftModel
+	NewCaches() []cache.Cache
+	AppendContext(target MTPEmbeddingModel, inputIDs, hidden *mlx.Array, position int32, caches []cache.Cache)
 }
 
 // MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.
