@@ -159,13 +159,35 @@ func TestCreateModel_NotSafetensorsDir(t *testing.T) {
 }
 
 func TestCreateModel_DraftQuantizeRequiresDraft(t *testing.T) {
-	err := CreateModel(CreateOptions{
-		ModelName:     "test-model",
-		ModelDir:      t.TempDir(),
-		DraftQuantize: "mxfp8",
-	}, nil)
-	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
-		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+	tests := []struct {
+		name       string
+		baseConfig *model.ConfigV2
+	}{
+		{name: "no draft"},
+		{
+			name: "inline draft metadata",
+			baseConfig: &model.ConfigV2{
+				Draft: &model.Draft{
+					ModelFormat:  "safetensors",
+					Architecture: "TestMTP",
+					TensorPrefix: "mtp.",
+					Config:       "config.json",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CreateModel(CreateOptions{
+				ModelName:     "test-model",
+				ModelDir:      t.TempDir(),
+				DraftQuantize: "mxfp8",
+				BaseConfig:    tt.baseConfig,
+			}, nil)
+			if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
+				t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+			}
+		})
 	}
 }
 
