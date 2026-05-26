@@ -16,6 +16,7 @@ import (
 
 func init() {
 	base.Register("Exaone4_5_ForConditionalGeneration", NewModel)
+	base.RegisterDraft("Exaone4_5_ForConditionalGenerationMTP", NewMTPModel)
 }
 
 type Model struct {
@@ -40,6 +41,7 @@ func NewModel(root *model.Root) (base.Model, error) {
 			exaone4.TensorPathLayout{ContainerPrefix: "model.language_model.", ModelPrefix: "model."},
 			exaone4.TensorPathLayout{ContainerPrefix: "language_model."},
 			exaone4.TensorPathLayout{ContainerPrefix: "language_model.", ModelPrefix: "model."},
+			exaone4.TensorPathLayout{ModelPrefix: "model."},
 		),
 	)
 	if err != nil {
@@ -92,6 +94,10 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LanguageModel.Unembed(x)
 }
 
+func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
+	return m.LanguageModel.TokenEmbeddings(inputIDs)
+}
+
 func (m *Model) NumLayers() int {
 	return m.LanguageModel.NumLayers()
 }
@@ -102,4 +108,12 @@ func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 
 func (m *Model) MaxContextLength() int {
 	return m.LanguageModel.MaxContextLength()
+}
+
+func (m *Model) MTPDraftDefaults(bool) base.MTPDefaults {
+	return base.MTPDefaults{
+		InitialDraftTokens: 3,
+		MaxDraftTokens:     3,
+		Enabled:            true,
+	}
 }

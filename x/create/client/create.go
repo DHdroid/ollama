@@ -143,9 +143,10 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	isImageGen := create.IsTensorModelDir(opts.ModelDir)
-	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
-	isBaseModelWithDraft := hasDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
-	if opts.DraftQuantize != "" && !hasDraft {
+	hasExplicitDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
+	hasDraft := hasExplicitDraft || (opts.BaseConfig != nil && opts.BaseConfig.Draft != nil)
+	isBaseModelWithDraft := hasExplicitDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
+	if opts.DraftQuantize != "" && !hasExplicitDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
 	}
 
@@ -153,7 +154,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		return fmt.Errorf("%s is not a supported model directory (needs config.json + *.safetensors or model_index.json)", opts.ModelDir)
 	}
 
-	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
+	if hasExplicitDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
 		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
 	}
 	if hasDraft && isImageGen {
@@ -172,6 +173,23 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
 		capabilities = inferSafetensorsCapabilities(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
+		if !hasExplicitDraft && (opts.BaseConfig == nil || opts.BaseConfig.Draft == nil) {
+			draft, err := create.InlineMTPDraftMetadata(opts.ModelDir)
+			if err != nil {
+				return err
+			}
+			if draft != nil {
+				baseConfig := model.ConfigV2{}
+				if opts.BaseConfig != nil {
+					baseConfig = *opts.BaseConfig
+				}
+				if baseConfig.Draft == nil {
+					baseConfig.Draft = draft
+				}
+				opts.BaseConfig = &baseConfig
+				hasDraft = true
+			}
+		}
 	} else if isBaseModelWithDraft {
 		modelType = "safetensors model"
 		spinnerKey = "create"
@@ -195,7 +213,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	var draftLayers []create.LayerInfo
 	var err error
-	if hasDraft {
+	if hasExplicitDraft {
 		draftLayers, err = create.CreateDraftSafetensorsLayers(
 			opts.Modelfile.Draft,
 			"draft.",

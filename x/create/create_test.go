@@ -507,6 +507,62 @@ func TestCreateDraftSafetensorsLayersPrefixesTensorsAndConfigs(t *testing.T) {
 	}
 }
 
+func TestExaone45ImportTransformKeepsMTPAndSkipsVision(t *testing.T) {
+	tform := exaone45ImportTransform{}
+
+	if tform.skipTensor("mtp.fc.weight") {
+		t.Fatal("EXAONE 4.5 import transform skipped MTP tensor")
+	}
+	if tform.skipTensor("mtp.layers.0.self_attn.q_proj.weight") {
+		t.Fatal("EXAONE 4.5 import transform skipped MTP layer tensor")
+	}
+	if !tform.skipTensor("model.visual.blocks.0.attn.q_proj.weight") {
+		t.Fatal("EXAONE 4.5 import transform did not skip model.visual tensor")
+	}
+	if !tform.skipTensor("visual.blocks.0.attn.q_proj.weight") {
+		t.Fatal("EXAONE 4.5 import transform did not skip visual tensor")
+	}
+}
+
+func TestInlineMTPDraftMetadata(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["Exaone4_5_ForConditionalGeneration"],"model_type":"exaone4_5"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("mtp.fc.weight", "BF16", []int32{2, 4}, make([]byte, 16)),
+	})
+
+	draft, err := InlineMTPDraftMetadata(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft == nil {
+		t.Fatal("draft metadata missing")
+	}
+	if draft.Architecture != "Exaone4_5_ForConditionalGenerationMTP" || draft.TensorPrefix != "mtp." || draft.Config != "config.json" {
+		t.Fatalf("draft = %#v, want inline EXAONE 4.5 MTP metadata", draft)
+	}
+}
+
+func TestInlineMTPDraftMetadataIgnoresUnsupportedArchitecture(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"architectures":["UnsupportedForCausalLM"],"model_type":"unsupported"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("mtp.fc.weight", "BF16", []int32{2, 4}, make([]byte, 16)),
+	})
+
+	draft, err := InlineMTPDraftMetadata(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if draft != nil {
+		t.Fatalf("draft = %#v, want nil for unsupported inline MTP architecture", draft)
+	}
+}
+
 func TestCreateDraftSafetensorsLayersQuantizesEligibleTensors(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{

@@ -12,7 +12,9 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
 )
@@ -79,6 +81,15 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
+	var cachedMTPDraft base.CachedMTPDraftModel
+	var mtpCaches []cache.Cache
+	if r.useGreedyMTP(request.SamplerOpts) || r.useSampleMTP(request.SamplerOpts) {
+		if draft, ok := r.Draft.(base.CachedMTPDraftModel); ok {
+			cachedMTPDraft = draft
+			mtpCaches = draft.NewCaches()
+			defer freeCacheSet(mtpCaches)
+		}
+	}
 
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
@@ -93,15 +104,63 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		session.requestSnapshot(end)
 	}
 
-	materializeCaches := func() {
+	materializeCaches := func(cacheSets ...[]cache.Cache) {
+		if len(cacheSets) == 0 {
+			cacheSets = [][]cache.Cache{caches}
+		}
 		state := make([]*mlx.Array, 0, 2*len(caches))
-		for _, c := range caches {
-			state = append(state, c.State()...)
+		for _, set := range cacheSets {
+			for _, c := range set {
+				if c == nil {
+					continue
+				}
+				state = append(state, c.State()...)
+			}
 		}
 		if len(state) == 0 {
 			return
 		}
 		mlx.Eval(state...)
+	}
+
+	if cachedMTPDraft != nil {
+		targetCachedPrefix := len(inputs) - len(tokens)
+		if targetCachedPrefix > 0 {
+			t0 := time.Now()
+			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
+			rebuildCaches := newModelCaches(r.Model)
+			rebuildProcessed := 0
+			for targetCachedPrefix-rebuildProcessed > 0 {
+				if err := ctx.Err(); err != nil {
+					freeCacheSet(rebuildCaches)
+					return err
+				}
+				n := min(prefillChunk, targetCachedPrefix-rebuildProcessed)
+				start, end := rebuildProcessed, rebuildProcessed+n
+				inputIDs := mlx.FromValues(inputs[start:end], 1, n)
+				hidden := r.Model.Forward(&batch.Batch{
+					InputIDs:     inputIDs,
+					SeqOffsets:   []int32{int32(start)},
+					SeqQueryLens: []int32{int32(n)},
+				}, rebuildCaches)
+				cachedMTPDraft.AppendContext(targetEmbeddings, inputIDs, hidden, int32(start), mtpCaches)
+				mlx.Sweep()
+				materializeCaches(rebuildCaches, mtpCaches)
+				rebuildProcessed = end
+				mlx.ClearCache()
+			}
+			freeCacheSet(rebuildCaches)
+			draftOffset := 0
+			if len(mtpCaches) > 0 && mtpCaches[0] != nil {
+				draftOffset = mtpCaches[0].Offset()
+			}
+			slog.Info("MTP draft cache rebuild",
+				"target_cached", targetCachedPrefix,
+				"rebuilt", targetCachedPrefix,
+				"draft_offset", draftOffset,
+				"duration", time.Since(t0),
+			)
+		}
 	}
 
 	now := time.Now()
@@ -123,13 +182,24 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			}
 		}
 
-		r.Model.Forward(&batch.Batch{
+		b := &batch.Batch{
 			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
-		}, caches)
+		}
+		if cachedMTPDraft != nil {
+			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
+			targetHidden := r.Model.Forward(b, caches)
+			cachedMTPDraft.AppendContext(targetEmbeddings, b.InputIDs, targetHidden, int32(position), mtpCaches)
+		} else {
+			r.Model.Forward(b, caches)
+		}
 		mlx.Sweep()
-		materializeCaches()
+		if cachedMTPDraft != nil {
+			materializeCaches(caches, mtpCaches)
+		} else {
+			materializeCaches()
+		}
 		processed += n
 		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
@@ -148,10 +218,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 	if r.useGreedyMTP(request.SamplerOpts) {
-		return r.runGreedyMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+		return r.runGreedyMTPDecode(ctx, request, session, caches, mtpCaches, tokens[processed:], &position, now)
 	}
 	if r.useSampleMTP(request.SamplerOpts) {
-		return r.runSampleMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+		return r.runSampleMTPDecode(ctx, request, session, caches, mtpCaches, tokens[processed:], &position, now)
 	}
 
 	step := func(token *mlx.Array) sampler.Result {
