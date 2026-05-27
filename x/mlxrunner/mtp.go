@@ -190,7 +190,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 	hidden := targetForward(seedInput)
 	current := sampler.Result{Token: greedyTokenFromLogits(r.lastLogits(hidden))}
 	if cachedDraft, ok := draft.(base.CachedMTPDraftModel); ok && len(draftCaches) > 0 {
-		cachedDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition+1, draftCaches)
+		cachedDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition, draftCaches)
 	}
 	mlx.Pin(current.Arrays()...)
 	mlx.Sweep()
@@ -340,7 +340,7 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 	hidden := targetForward(seedInput)
 	current := r.Sampler.Sample([]int{pipelineSlot}, r.lastLogits(hidden))
 	if cachedDraft, ok := draft.(base.CachedMTPDraftModel); ok && len(draftCaches) > 0 {
-		cachedDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition+1, draftCaches)
+		cachedDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition, draftCaches)
 	}
 	mlx.Pin(current.Arrays()...)
 	mlx.Sweep()
