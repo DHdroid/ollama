@@ -127,9 +127,10 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	isImageGen := create.IsTensorModelDir(opts.ModelDir)
-	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
-	isBaseModelWithDraft := hasDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
-	if opts.DraftQuantize != "" && !hasDraft {
+	hasModelfileDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
+	hasDraftMetadata := hasModelfileDraft || (opts.BaseConfig != nil && opts.BaseConfig.Draft != nil)
+	isBaseModelWithDraft := hasModelfileDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
+	if opts.DraftQuantize != "" && !hasModelfileDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
 	}
 
@@ -137,10 +138,10 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		return fmt.Errorf("%s is not a supported model directory (needs config.json + *.safetensors or model_index.json)", opts.ModelDir)
 	}
 
-	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
+	if hasModelfileDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
 		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
 	}
-	if hasDraft && isImageGen {
+	if hasDraftMetadata && isImageGen {
 		return fmt.Errorf("draft models are only supported for safetensors LLM models")
 	}
 
@@ -156,6 +157,22 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
 		capabilities = inferSafetensorsCapabilities(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
+		if !hasModelfileDraft && !hasDraftMetadata {
+			draft, err := create.InlineMTPDraftMetadata(opts.ModelDir)
+			if err != nil {
+				return err
+			}
+			if draft != nil {
+				baseConfig := model.ConfigV2{}
+				if opts.BaseConfig != nil {
+					baseConfig = *opts.BaseConfig
+				}
+				if baseConfig.Draft == nil {
+					baseConfig.Draft = draft
+				}
+				opts.BaseConfig = &baseConfig
+			}
+		}
 	} else if isBaseModelWithDraft {
 		modelType = "safetensors model"
 		spinnerKey = "create"
@@ -179,7 +196,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	var draftLayers []create.LayerInfo
 	var err error
-	if hasDraft {
+	if hasModelfileDraft {
 		draftLayers, err = create.CreateDraftSafetensorsLayers(
 			opts.Modelfile.Draft,
 			"draft.",
@@ -641,9 +658,11 @@ func supportsThinking(modelDir string) bool {
 
 	// Check architectures that support thinking
 	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"qwen3",    // Qwen3 models
+		"glm4moe",   // GLM-4 MoE models
+		"deepseek",  // DeepSeek models
+		"exaone4_5", // EXAONE 4.5 models
+		"exaone4",   // EXAONE 4.0 models
+		"qwen3",     // Qwen3 models
 	}
 
 	// Check the architecture list
@@ -738,6 +757,12 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
+		if strings.Contains(archLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(archLower, "exaone") {
+			return "exaone4"
+		}
 	}
 
 	// Also check model_type
@@ -757,6 +782,12 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
+		}
+		if strings.Contains(typeLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(typeLower, "exaone") {
+			return "exaone4"
 		}
 	}
 
@@ -798,6 +829,12 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3-coder"
 		}
+		if strings.Contains(archLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(archLower, "exaone") {
+			return "exaone4"
+		}
 	}
 
 	// Also check model_type
@@ -817,6 +854,12 @@ func getRendererName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3-coder"
+		}
+		if strings.Contains(typeLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(typeLower, "exaone") {
+			return "exaone4"
 		}
 	}
 

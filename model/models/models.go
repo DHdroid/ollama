@@ -4,6 +4,8 @@ import (
 	_ "github.com/ollama/ollama/model/models/bert"
 	_ "github.com/ollama/ollama/model/models/deepseek2"
 	_ "github.com/ollama/ollama/model/models/deepseekocr"
+	_ "github.com/ollama/ollama/model/models/exaone4"
+	_ "github.com/ollama/ollama/model/models/exaone4_5"
 	_ "github.com/ollama/ollama/model/models/gemma2"
 	_ "github.com/ollama/ollama/model/models/gemma3"
 	_ "github.com/ollama/ollama/model/models/gemma3n"

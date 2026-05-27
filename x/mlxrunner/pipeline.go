@@ -87,6 +87,8 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	var dflashTarget base.DFlashTargetModel
 	var dflashCaches []cache.Cache
 	var dflashSession *cacheSession
+	var cachedMTPDraft base.CachedMTPDraftModel
+	var mtpCaches []cache.Cache
 	if dflashEnabled {
 		dflashDraft = r.Draft.(base.DFlashDraftModel)
 		dflashTarget = r.Model.(base.DFlashTargetModel)
@@ -110,6 +112,12 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			"logprobs", request.SamplerOpts.Logprobs,
 			"top_logprobs", request.SamplerOpts.TopLogprobs,
 		)
+	} else if r.useGreedyMTP(request.SamplerOpts) || r.useSampleMTP(request.SamplerOpts) {
+		if draft, ok := r.Draft.(base.CachedMTPDraftModel); ok {
+			cachedMTPDraft = draft
+			mtpCaches = draft.NewCaches()
+			defer freeCacheSet(mtpCaches)
+		}
 	}
 
 	requestPipelineSnapshots := func(s *cacheSession) {
@@ -226,6 +234,54 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			)
 		}
 	}
+	if cachedMTPDraft != nil {
+		targetCachedPrefix := len(inputs) - len(tokens)
+		mtpCachedPrefix := min(targetCachedPrefix, len(inputs)-1)
+		if targetCachedPrefix > 0 {
+			t0 := time.Now()
+			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
+			rebuildCaches := newModelCaches(r.Model)
+			rebuildProcessed := 0
+			for targetCachedPrefix-rebuildProcessed > 0 {
+				if err := ctx.Err(); err != nil {
+					freeCacheSet(rebuildCaches)
+					return err
+				}
+				n := min(prefillChunk, targetCachedPrefix-rebuildProcessed)
+				start, end := rebuildProcessed, rebuildProcessed+n
+				inputIDs := mlx.FromValues(inputs[start:end], 1, n)
+				hidden := r.Model.Forward(&batch.Batch{
+					InputIDs:     inputIDs,
+					SeqOffsets:   []int32{int32(start)},
+					SeqQueryLens: []int32{int32(n)},
+				}, rebuildCaches)
+				if appendEnd := min(end, mtpCachedPrefix); appendEnd > start {
+					nextInputIDs := mlx.FromValues(inputs[start+1:appendEnd+1], 1, appendEnd-start)
+					appendHidden := hidden
+					if appendEnd < end {
+						appendHidden = hidden.Slice(mlx.Slice(), mlx.Slice(0, appendEnd-start), mlx.Slice())
+					}
+					cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start), mtpCaches)
+				}
+				mlx.Sweep()
+				materializeCaches(rebuildCaches, mtpCaches)
+				rebuildProcessed = end
+				mlx.ClearCache()
+			}
+			freeCacheSet(rebuildCaches)
+			draftOffset := 0
+			if len(mtpCaches) > 0 && mtpCaches[0] != nil {
+				draftOffset = mtpCaches[0].Offset()
+			}
+			slog.Info("MTP draft cache rebuild",
+				"target_cached", targetCachedPrefix,
+				"rebuilt", targetCachedPrefix,
+				"mtp_rebuilt", mtpCachedPrefix,
+				"draft_offset", draftOffset,
+				"duration", time.Since(t0),
+			)
+		}
+	}
 
 	now := time.Now()
 	total, processed := len(tokens), 0
@@ -254,12 +310,19 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		if dflashEnabled {
 			_, targetHidden := dflashTarget.ForwardDFlash(b, caches, dflashDraft.TargetLayerIDs())
 			dflashDraft.AppendContext(targetHidden, dflashCaches)
+		} else if cachedMTPDraft != nil {
+			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
+			targetHidden := r.Model.Forward(b, caches)
+			nextInputIDs := mlx.FromValues(tokens[processed+1:processed+n+1], 1, n)
+			cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position), mtpCaches)
 		} else {
 			r.Model.Forward(b, caches)
 		}
 		mlx.Sweep()
 		if dflashEnabled {
 			materializeCaches(caches, dflashCaches)
+		} else if cachedMTPDraft != nil {
+			materializeCaches(caches, mtpCaches)
 		} else {
 			materializeCaches()
 		}
@@ -283,10 +346,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		return r.runSampleDFlashDecode(ctx, request, session, caches, dflashCaches, tokens[processed:], &position, now)
 	}
 	if r.useGreedyMTP(request.SamplerOpts) {
-		return r.runGreedyMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+		return r.runGreedyMTPDecode(ctx, request, session, caches, mtpCaches, tokens[processed:], &position, now)
 	}
 	if r.useSampleMTP(request.SamplerOpts) {
-		return r.runSampleMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+		return r.runSampleMTPDecode(ctx, request, session, caches, mtpCaches, tokens[processed:], &position, now)
 	}
 
 	step := func(token *mlx.Array) sampler.Result {

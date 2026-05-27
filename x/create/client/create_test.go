@@ -159,13 +159,35 @@ func TestCreateModel_NotSafetensorsDir(t *testing.T) {
 }
 
 func TestCreateModel_DraftQuantizeRequiresDraft(t *testing.T) {
-	err := CreateModel(CreateOptions{
-		ModelName:     "test-model",
-		ModelDir:      t.TempDir(),
-		DraftQuantize: "mxfp8",
-	}, nil)
-	if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
-		t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+	tests := []struct {
+		name       string
+		baseConfig *model.ConfigV2
+	}{
+		{name: "no draft"},
+		{
+			name: "inline draft metadata",
+			baseConfig: &model.ConfigV2{
+				Draft: &model.Draft{
+					ModelFormat:  "safetensors",
+					Architecture: "TestMTP",
+					TensorPrefix: "mtp.",
+					Config:       "config.json",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CreateModel(CreateOptions{
+				ModelName:     "test-model",
+				ModelDir:      t.TempDir(),
+				DraftQuantize: "mxfp8",
+				BaseConfig:    tt.baseConfig,
+			}, nil)
+			if err == nil || !strings.Contains(err.Error(), "--draft-quantize requires a DRAFT model") {
+				t.Fatalf("error = %v, want draft-quantize requires DRAFT", err)
+			}
+		})
 	}
 }
 
@@ -338,6 +360,22 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 				"vision_config": {"hidden_size": 1024}
 			}`,
 			want: []string{"completion", "vision", "thinking"},
+		},
+		{
+			name: "exaone4 text model",
+			configJSON: `{
+				"architectures": ["Exaone4ForCausalLM"],
+				"model_type": "exaone4"
+			}`,
+			want: []string{"completion", "thinking"},
+		},
+		{
+			name: "exaone4_5 text model",
+			configJSON: `{
+				"architectures": ["Exaone4_5_ForConditionalGeneration"],
+				"model_type": "exaone4_5"
+			}`,
+			want: []string{"completion", "thinking"},
 		},
 		{
 			name: "model with audio config",
@@ -613,6 +651,16 @@ func TestSupportsThinking(t *testing.T) {
 			want:       true,
 		},
 		{
+			name:       "exaone4 architecture",
+			configJSON: `{"architectures": ["Exaone4ForCausalLM"], "model_type": "exaone4"}`,
+			want:       true,
+		},
+		{
+			name:       "exaone4_5 architecture",
+			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
+			want:       true,
+		},
+		{
 			name:       "llama architecture (no thinking)",
 			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
 			want:       false,
@@ -677,6 +725,16 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 			name:       "functiongemma tools only",
 			parserName: "functiongemma",
 			want:       []string{"completion", "tools"},
+		},
+		{
+			name:       "exaone4 tools and thinking",
+			parserName: "exaone4",
+			want:       []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:       "exaone4_5 tools and thinking",
+			parserName: "exaone4_5",
+			want:       []string{"completion", "tools", "thinking"},
 		},
 	}
 
@@ -748,6 +806,16 @@ func TestGetParserName(t *testing.T) {
 			want:       "laguna",
 		},
 		{
+			name:       "exaone4 model",
+			configJSON: `{"architectures": ["Exaone4ForCausalLM"], "model_type": "exaone4"}`,
+			want:       "exaone4",
+		},
+		{
+			name:       "exaone4_5 model",
+			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
+			want:       "exaone4_5",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -796,6 +864,16 @@ func TestGetRendererName(t *testing.T) {
 			name:       "laguna model",
 			configJSON: `{"architectures": ["LagunaForCausalLM"], "model_type": "laguna"}`,
 			want:       "laguna",
+		},
+		{
+			name:       "exaone4 model",
+			configJSON: `{"architectures": ["Exaone4ForCausalLM"], "model_type": "exaone4"}`,
+			want:       "exaone4",
+		},
+		{
+			name:       "exaone4_5 model",
+			configJSON: `{"architectures": ["Exaone4_5_ForConditionalGeneration"], "model_type": "exaone4_5"}`,
+			want:       "exaone4_5",
 		},
 	}
 
