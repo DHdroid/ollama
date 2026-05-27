@@ -127,10 +127,10 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	isImageGen := create.IsTensorModelDir(opts.ModelDir)
-	hasExplicitDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
-	hasDraft := hasExplicitDraft || (opts.BaseConfig != nil && opts.BaseConfig.Draft != nil)
-	isBaseModelWithDraft := hasExplicitDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
-	if opts.DraftQuantize != "" && !hasExplicitDraft {
+	hasModelfileDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
+	hasDraftMetadata := hasModelfileDraft || (opts.BaseConfig != nil && opts.BaseConfig.Draft != nil)
+	isBaseModelWithDraft := hasModelfileDraft && !isSafetensors && create.IsSafetensorsLLMModel(opts.ModelDir)
+	if opts.DraftQuantize != "" && !hasModelfileDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
 	}
 
@@ -138,10 +138,10 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		return fmt.Errorf("%s is not a supported model directory (needs config.json + *.safetensors or model_index.json)", opts.ModelDir)
 	}
 
-	if hasExplicitDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
+	if hasModelfileDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
 		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
 	}
-	if hasDraft && isImageGen {
+	if hasDraftMetadata && isImageGen {
 		return fmt.Errorf("draft models are only supported for safetensors LLM models")
 	}
 
@@ -157,7 +157,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
 		capabilities = inferSafetensorsCapabilities(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
-		if !hasExplicitDraft && (opts.BaseConfig == nil || opts.BaseConfig.Draft == nil) {
+		if !hasModelfileDraft && !hasDraftMetadata {
 			draft, err := create.InlineMTPDraftMetadata(opts.ModelDir)
 			if err != nil {
 				return err
@@ -171,7 +171,6 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 					baseConfig.Draft = draft
 				}
 				opts.BaseConfig = &baseConfig
-				hasDraft = true
 			}
 		}
 	} else if isBaseModelWithDraft {
@@ -197,7 +196,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	var draftLayers []create.LayerInfo
 	var err error
-	if hasExplicitDraft {
+	if hasModelfileDraft {
 		draftLayers, err = create.CreateDraftSafetensorsLayers(
 			opts.Modelfile.Draft,
 			"draft.",
@@ -659,10 +658,11 @@ func supportsThinking(modelDir string) bool {
 
 	// Check architectures that support thinking
 	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"exaone4",  // EXAONE 4.x models
-		"qwen3",    // Qwen3 models
+		"glm4moe",   // GLM-4 MoE models
+		"deepseek",  // DeepSeek models
+		"exaone4_5", // EXAONE 4.5 models
+		"exaone4",   // EXAONE 4.0 models
+		"qwen3",     // Qwen3 models
 	}
 
 	// Check the architecture list

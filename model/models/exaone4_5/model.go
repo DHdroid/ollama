@@ -14,7 +14,7 @@ import (
 	"github.com/ollama/ollama/tokenizer"
 )
 
-const exaoneMoePretokenizer = `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?(?:\p{L}\p{M}*(?: \p{L}\p{M}*)*)+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]?|\s*[\r\n]|\s+(?!\S)|\s+`
+const exaone45Pretokenizer = `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?(?:\p{L}\p{M}*(?: \p{L}\p{M}*)*)+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]?|\s*[\r\n]|\s+(?!\S)|\s+`
 
 type Model struct {
 	model.Base
@@ -138,7 +138,7 @@ func exaone45Tokenizer(c fs.Config) tokenizer.Tokenizer {
 	if strings.EqualFold(c.String("tokenizer.ggml.pre"), "exaone-moe") {
 		return tokenizer.NewBytePairEncoding(
 			&vocabulary,
-			exaoneMoePretokenizer,
+			exaone45Pretokenizer,
 		)
 	}
 
