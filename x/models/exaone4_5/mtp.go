@@ -139,8 +139,8 @@ func (m *MTPModel) NewCaches() []cache.Cache {
 	return []cache.Cache{cache.NewKVCache()}
 }
 
-func (m *MTPModel) AppendContext(target base.MTPEmbeddingModel, inputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) {
-	tokenEmbedding := target.TokenEmbeddings(inputIDs)
+func (m *MTPModel) AppendContext(target base.MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) {
+	tokenEmbedding := target.TokenEmbeddings(nextInputIDs)
 	inputs := tokenEmbedding.Concatenate(-1, hidden)
 	m.forward(inputs, position, caches)
 }
