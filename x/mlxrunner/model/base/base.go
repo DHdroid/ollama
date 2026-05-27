@@ -56,7 +56,9 @@ type MTPDraftModel interface {
 type CachedMTPDraftModel interface {
 	MTPDraftModel
 	NewCaches() []cache.Cache
-	AppendContext(target MTPEmbeddingModel, inputIDs, hidden *mlx.Array, position int32, caches []cache.Cache)
+	// AppendContext appends target hidden states paired with the shifted next
+	// token ids used by EAGLE-style MTP draft-extend.
+	AppendContext(target MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache)
 }
 
 // MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.

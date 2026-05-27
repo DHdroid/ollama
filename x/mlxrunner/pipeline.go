@@ -236,6 +236,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}
 	if cachedMTPDraft != nil {
 		targetCachedPrefix := len(inputs) - len(tokens)
+		mtpCachedPrefix := min(targetCachedPrefix, len(inputs)-1)
 		if targetCachedPrefix > 0 {
 			t0 := time.Now()
 			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
@@ -254,7 +255,14 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 					SeqOffsets:   []int32{int32(start)},
 					SeqQueryLens: []int32{int32(n)},
 				}, rebuildCaches)
-				cachedMTPDraft.AppendContext(targetEmbeddings, inputIDs, hidden, int32(start), mtpCaches)
+				if appendEnd := min(end, mtpCachedPrefix); appendEnd > start {
+					nextInputIDs := mlx.FromValues(inputs[start+1:appendEnd+1], 1, appendEnd-start)
+					appendHidden := hidden
+					if appendEnd < end {
+						appendHidden = hidden.Slice(mlx.Slice(), mlx.Slice(0, appendEnd-start), mlx.Slice())
+					}
+					cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start+1), mtpCaches)
+				}
 				mlx.Sweep()
 				materializeCaches(rebuildCaches, mtpCaches)
 				rebuildProcessed = end
@@ -268,6 +276,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			slog.Info("MTP draft cache rebuild",
 				"target_cached", targetCachedPrefix,
 				"rebuilt", targetCachedPrefix,
+				"mtp_rebuilt", mtpCachedPrefix,
 				"draft_offset", draftOffset,
 				"duration", time.Since(t0),
 			)
@@ -304,7 +313,8 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		} else if cachedMTPDraft != nil {
 			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
 			targetHidden := r.Model.Forward(b, caches)
-			cachedMTPDraft.AppendContext(targetEmbeddings, b.InputIDs, targetHidden, int32(position), mtpCaches)
+			nextInputIDs := mlx.FromValues(tokens[processed+1:processed+n+1], 1, n)
+			cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position+1), mtpCaches)
 		} else {
 			r.Model.Forward(b, caches)
 		}
