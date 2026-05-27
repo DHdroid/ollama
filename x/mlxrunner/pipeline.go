@@ -261,7 +261,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 					if appendEnd < end {
 						appendHidden = hidden.Slice(mlx.Slice(), mlx.Slice(0, appendEnd-start), mlx.Slice())
 					}
-					cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start+1), mtpCaches)
+					cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start), mtpCaches)
 				}
 				mlx.Sweep()
 				materializeCaches(rebuildCaches, mtpCaches)
@@ -314,7 +314,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
 			targetHidden := r.Model.Forward(b, caches)
 			nextInputIDs := mlx.FromValues(tokens[processed+1:processed+n+1], 1, n)
-			cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position+1), mtpCaches)
+			cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position), mtpCaches)
 		} else {
 			r.Model.Forward(b, caches)
 		}
