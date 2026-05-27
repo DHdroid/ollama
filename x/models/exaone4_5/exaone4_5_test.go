@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
+	"github.com/ollama/ollama/x/models/exaone4"
 )
 
 var _ base.Model = (*Model)(nil)
@@ -68,5 +69,23 @@ func TestMTPDraftDefaults(t *testing.T) {
 	defaults := (&Model{}).MTPDraftDefaults(false)
 	if !defaults.Enabled || defaults.InitialDraftTokens != 3 || defaults.MaxDraftTokens != 3 {
 		t.Fatalf("MTPDraftDefaults = %+v, want enabled initial=3 max=3", defaults)
+	}
+}
+
+func TestMTPLayerSliding(t *testing.T) {
+	if !isMTPLayerSliding(&exaone4.Config{
+		LayerTypes: []string{"sliding_attention", "full_attention"},
+	}) {
+		t.Fatal("isMTPLayerSliding with sliding layer_types = false, want true")
+	}
+	if !isMTPLayerSliding(&exaone4.Config{
+		SlidingWindowPattern: "LLLG",
+	}) {
+		t.Fatal("isMTPLayerSliding with LLLG pattern = false, want true")
+	}
+	if isMTPLayerSliding(&exaone4.Config{
+		LayerTypes: []string{"full_attention", "sliding_attention"},
+	}) {
+		t.Fatal("isMTPLayerSliding with full first layer = true, want false")
 	}
 }

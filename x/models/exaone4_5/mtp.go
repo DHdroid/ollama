@@ -44,10 +44,8 @@ func NewMTPModel(root *model.Root, target base.Model) (base.DraftModel, error) {
 	if err != nil {
 		return nil, err
 	}
+	isSliding := isMTPLayerSliding(&cfg)
 	cfg.NumHiddenLayers = 1
-	cfg.LayerTypes = nil
-	cfg.SlidingWindowPattern = ""
-	cfg.SlidingWindow = 0
 
 	if qt := root.QuantType(); qt != "" {
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
@@ -64,10 +62,21 @@ func NewMTPModel(root *model.Root, target base.Model) (base.DraftModel, error) {
 		Config: &cfg,
 		Layer: &exaone4.Layer{
 			LayerIdx:  0,
+			IsSliding: isSliding,
 			Attention: &exaone4.Attention{},
 			MLP:       &exaone4.MLP{},
 		},
 	}, nil
+}
+
+func isMTPLayerSliding(cfg *exaone4.Config) bool {
+	if len(cfg.LayerTypes) > 0 {
+		return cfg.LayerTypes[0] == "sliding_attention"
+	}
+	if cfg.SlidingWindowPattern != "" {
+		return cfg.SlidingWindowPattern[0] == 'L' || cfg.SlidingWindowPattern[0] == 'l'
+	}
+	return false
 }
 
 func (m *MTPModel) LoadWeights(tensors map[string]*mlx.Array) error {
@@ -136,6 +145,9 @@ func (m *MTPModel) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 func (m *MTPModel) NewCaches() []cache.Cache {
+	if m.SlidingWindow > 0 && m.Layer.IsSliding {
+		return []cache.Cache{cache.NewRotatingKVCache(max(1, int(m.SlidingWindow)-1))}
+	}
 	return []cache.Cache{cache.NewKVCache()}
 }
 
