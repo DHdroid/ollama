@@ -63,7 +63,7 @@ func TestExaone4KVAndReplacements(t *testing.T) {
 	}
 }
 
-func TestExaone45PreservesMTPAndMapsVision(t *testing.T) {
+func TestExaone45SplitsTextAndProjector(t *testing.T) {
 	m := &exaone45Model{}
 	m.ModelParameters = ModelParameters{VocabSize: 153600}
 	m.HiddenSize = 2048
@@ -97,11 +97,28 @@ func TestExaone45PreservesMTPAndMapsVision(t *testing.T) {
 	if got := kv.Uint("block_count"); got != 64 {
 		t.Fatalf("block_count = %d, want 64", got)
 	}
-	if _, ok := kv["exaone4_5.nextn_predict_layers"]; ok {
-		t.Fatal("nextn_predict_layers should not be emitted when mtp.* tensors are preserved")
+	if _, ok := kv["exaone4_5.vision.block_count"]; ok {
+		t.Fatal("text KV should not contain vision metadata")
 	}
-	if got := kv.Uint("vision.block_count"); got != 28 {
-		t.Fatalf("vision.block_count = %d, want 28", got)
+
+	projectorKV := m.ProjectorKV(testTokenizer())
+	if got := projectorKV.String("general.architecture"); got != "clip" {
+		t.Fatalf("projector architecture = %q, want clip", got)
+	}
+	if got := projectorKV.String("general.type"); got != "mmproj" {
+		t.Fatalf("projector type = %q, want mmproj", got)
+	}
+	if got := projectorKV["clip.projector_type"]; got != "exaone4_5" {
+		t.Fatalf("clip.projector_type = %q, want exaone4_5", got)
+	}
+	if got := projectorKV["clip.vision.block_count"]; got != uint32(28) {
+		t.Fatalf("clip.vision.block_count = %d, want 28", got)
+	}
+	if got := projectorKV["clip.vision.attention.head_count_kv"]; got != uint32(8) {
+		t.Fatalf("clip.vision.attention.head_count_kv = %d, want 8", got)
+	}
+	if got := projectorKV["clip.vision.n_wa_pattern"]; got != uint32(7) {
+		t.Fatalf("clip.vision.n_wa_pattern = %d, want 7", got)
 	}
 
 	replacer := strings.NewReplacer(m.Replacements()...)
@@ -119,19 +136,49 @@ func TestExaone45PreservesMTPAndMapsVision(t *testing.T) {
 	}
 
 	patch := &fakeTensor{name: "v.patch_embd.weight", shape: []uint64{2, 3, 2, 2, 2}, data: slices.Repeat([]float32{1}, 48)}
+	qkvWeight := &fakeTensor{name: "v.blk.0.attn_qkv.weight", shape: []uint64{3072, 2048}, data: slices.Repeat([]float32{1}, 3072*2048)}
+	qkvBias := &fakeTensor{name: "v.blk.0.attn_qkv.bias", shape: []uint64{3072}, data: slices.Repeat([]float32{1}, 3072)}
+	merger := &fakeTensor{name: "v.merger.mlp.2.weight", shape: []uint64{8192, 2048}, data: slices.Repeat([]float32{1}, 8192*2048)}
 	mtp := &fakeTensor{name: "mtp.layers.0.attn_q.weight", shape: []uint64{2, 2}, data: slices.Repeat([]float32{1}, 4)}
-	out := m.Tensors([]Tensor{patch, mtp})
-	names := make(map[string][]uint64)
-	for _, tt := range out {
-		names[tt.Name] = tt.Shape
+	text := m.TextTensors([]Tensor{patch, qkvWeight, mtp}, testTokenizer())
+	textNames := make(map[string][]uint64)
+	for _, tt := range text {
+		textNames[tt.Name] = tt.Shape
 	}
-	if got := names["v.patch_embd_0.weight"]; !slices.Equal(got, []uint64{2, 3, 2, 2}) {
-		t.Fatalf("patch_embd_0 shape = %v, want [2 3 2 2]", got)
+	if _, ok := textNames["v.patch_embd.weight"]; ok {
+		t.Fatal("text tensors included vision patch tensor")
 	}
-	if got := names["v.patch_embd_1.weight"]; !slices.Equal(got, []uint64{2, 3, 2, 2}) {
-		t.Fatalf("patch_embd_1 shape = %v, want [2 3 2 2]", got)
-	}
-	if _, ok := names["mtp.layers.0.self_attn.q_proj.weight"]; !ok {
+	if _, ok := textNames["mtp.layers.0.self_attn.q_proj.weight"]; !ok {
 		t.Fatal("mtp layer tensor was not restored to HF name")
+	}
+
+	projector := m.ProjectorTensors([]Tensor{patch, qkvWeight, qkvBias, merger, mtp})
+	projectorNames := make(map[string][]uint64)
+	for _, tt := range projector {
+		projectorNames[tt.Name] = tt.Shape
+	}
+	if got := projectorNames["v.patch_embd.weight"]; !slices.Equal(got, []uint64{2, 3, 2, 2}) {
+		t.Fatalf("patch_embd.weight shape = %v, want [2 3 2 2]", got)
+	}
+	if got := projectorNames["v.patch_embd.weight.1"]; !slices.Equal(got, []uint64{2, 3, 2, 2}) {
+		t.Fatalf("patch_embd.weight.1 shape = %v, want [2 3 2 2]", got)
+	}
+	if got := projectorNames["v.blk.0.attn_q.weight"]; !slices.Equal(got, []uint64{2048, 2048}) {
+		t.Fatalf("attn_q weight shape = %v, want [2048 2048]", got)
+	}
+	if got := projectorNames["v.blk.0.attn_k.weight"]; !slices.Equal(got, []uint64{512, 2048}) {
+		t.Fatalf("attn_k weight shape = %v, want [512 2048]", got)
+	}
+	if got := projectorNames["v.blk.0.attn_v.weight"]; !slices.Equal(got, []uint64{512, 2048}) {
+		t.Fatalf("attn_v weight shape = %v, want [512 2048]", got)
+	}
+	if got := projectorNames["v.blk.0.attn_q.bias"]; !slices.Equal(got, []uint64{2048}) {
+		t.Fatalf("attn_q bias shape = %v, want [2048]", got)
+	}
+	if got := projectorNames["mm.2.weight"]; !slices.Equal(got, []uint64{8192, 2048}) {
+		t.Fatalf("mm.2.weight shape = %v, want [8192 2048]", got)
+	}
+	if _, ok := projectorNames["mtp.layers.0.attn_q.weight"]; ok {
+		t.Fatal("projector tensors included MTP tensor")
 	}
 }

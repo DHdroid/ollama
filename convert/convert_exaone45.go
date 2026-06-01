@@ -4,12 +4,12 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/ggml"
-	"github.com/pdevine/tensor"
 )
 
 type exaone45Model struct {
@@ -27,6 +27,7 @@ type exaone45Model struct {
 		WindowSize        uint32  `json:"window_size"`
 		RMSNormEPS        float32 `json:"rms_norm_eps"`
 		RopeTheta         float32 `json:"rope_theta"`
+		ImageSize         uint32  `json:"image_size"`
 		FullAttnBlocks    []int32 `json:"fullatt_block_indexes"`
 	} `json:"vision_config"`
 	Preprocessor struct {
@@ -43,6 +44,7 @@ type exaone45Model struct {
 }
 
 var _ ModelConverter = (*exaone45Model)(nil)
+var _ MultimodalConverter = (*exaone45Model)(nil)
 var _ moreParser = (*exaone45Model)(nil)
 
 func (m *exaone45Model) architecture() string {
@@ -61,33 +63,53 @@ func (m *exaone45Model) parseMore(fsys fs.FS) error {
 }
 
 func (m *exaone45Model) KV(t *Tokenizer) KV {
+	return m.TextKV(t)
+}
+
+func (m *exaone45Model) TextKV(t *Tokenizer) KV {
 	kv := m.exaone4Model.KV(t)
 	arch := m.architecture()
 	kv["general.architecture"] = arch
 	moveArchKV(kv, "exaone4", arch)
-
-	vision := m.VisionModel
-	kv[arch+".vision.projection_dim"] = m.HiddenSize
-	kv[arch+".vision.block_count"] = cmp.Or(vision.Depth, uint32(0))
-	kv[arch+".vision.embedding_length"] = vision.HiddenSize
-	kv[arch+".vision.feed_forward_length"] = vision.IntermediateSize
-	kv[arch+".vision.attention.head_count"] = vision.NumHeads
-	kv[arch+".vision.attention.head_count_kv"] = vision.NumKeyValueHeads
-	kv[arch+".vision.num_channels"] = cmp.Or(vision.InChannels, uint32(3))
-	kv[arch+".vision.patch_size"] = vision.PatchSize
-	kv[arch+".vision.spatial_merge_size"] = vision.SpatialMergeSize
-	kv[arch+".vision.temporal_patch_size"] = cmp.Or(vision.TemporalPatchSize, m.Preprocessor.TemporalPatchSize, uint32(2))
-	kv[arch+".vision.window_size"] = vision.WindowSize
-	kv[arch+".vision.attention.layer_norm_epsilon"] = cmp.Or(vision.RMSNormEPS, m.RMSNormEPS, float32(1e-6))
-	kv[arch+".vision.rope.freq_base"] = cmp.Or(vision.RopeTheta, float32(10000))
-	kv[arch+".vision.fullatt_block_indexes"] = vision.FullAttnBlocks
-	kv[arch+".vision.min_pixels"] = m.Preprocessor.MinPixels
-	kv[arch+".vision.max_pixels"] = m.Preprocessor.MaxPixels
-	kv[arch+".vision.shortest_edge"] = m.Preprocessor.Size.ShortestEdge
-	kv[arch+".vision.longest_edge"] = m.Preprocessor.Size.LongestEdge
-	kv[arch+".vision.image_mean"] = m.Preprocessor.ImageMean
-	kv[arch+".vision.image_std"] = m.Preprocessor.ImageStd
 	return kv
+}
+
+func (m *exaone45Model) ProjectorKV(*Tokenizer) KV {
+	vision := m.VisionModel
+	kv := KV{
+		"general.architecture":                     "clip",
+		"general.type":                             "mmproj",
+		"general.file_type":                        uint32(1),
+		"general.quantization_version":             uint32(2),
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "exaone4_5",
+		"clip.use_silu":                            true,
+		"clip.vision.projection_dim":               m.HiddenSize,
+		"clip.vision.image_size":                   cmp.Or(vision.ImageSize, uint32(560)),
+		"clip.vision.patch_size":                   cmp.Or(vision.PatchSize, uint32(14)),
+		"clip.vision.embedding_length":             vision.HiddenSize,
+		"clip.vision.feed_forward_length":          vision.IntermediateSize,
+		"clip.vision.block_count":                  vision.Depth,
+		"clip.vision.attention.head_count":         vision.NumHeads,
+		"clip.vision.attention.head_count_kv":      vision.NumKeyValueHeads,
+		"clip.vision.attention.layer_norm_epsilon": cmp.Or(vision.RMSNormEPS, m.RMSNormEPS, float32(1e-6)),
+		"clip.vision.window_size":                  cmp.Or(vision.WindowSize, uint32(112)),
+		"clip.vision.n_wa_pattern":                 m.visionWindowAttentionPattern(),
+	}
+	if len(m.Preprocessor.ImageMean) == 3 {
+		kv["clip.vision.image_mean"] = m.Preprocessor.ImageMean
+	}
+	if len(m.Preprocessor.ImageStd) == 3 {
+		kv["clip.vision.image_std"] = m.Preprocessor.ImageStd
+	}
+	return kv
+}
+
+func (m *exaone45Model) visionWindowAttentionPattern() uint32 {
+	if len(m.VisionModel.FullAttnBlocks) > 0 && m.VisionModel.FullAttnBlocks[0] >= 0 {
+		return uint32(m.VisionModel.FullAttnBlocks[0] + 1)
+	}
+	return 7
 }
 
 func moveArchKV(kv KV, oldArch, newArch string) {
@@ -103,26 +125,104 @@ func moveArchKV(kv KV, oldArch, newArch string) {
 }
 
 func (m *exaone45Model) Tensors(ts []Tensor) []*ggml.Tensor {
+	out := m.TextTensors(ts, nil)
+	return append(out, m.ProjectorTensors(ts)...)
+}
+
+func (m *exaone45Model) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
 	var out []*ggml.Tensor
 	var rest []Tensor
 	for _, t := range ts {
 		switch {
 		case strings.HasPrefix(t.Name(), "mtp."):
 			out = append(out, &ggml.Tensor{Name: restoreExaoneMTPName(t.Name()), Kind: t.Kind(), Shape: t.Shape(), WriterTo: t})
-		case strings.HasPrefix(t.Name(), "v.patch_embd.weight") && len(t.Shape()) == 5:
-			out = append(out, slices.Collect(splitDim(t, 2,
-				split{Replacer: strings.NewReplacer("v.patch_embd.weight", "v.patch_embd_0.weight"), afterFunc: squeezeTemporalPatch},
-				split{Replacer: strings.NewReplacer("v.patch_embd.weight", "v.patch_embd_1.weight"), afterFunc: squeezeTemporalPatch},
-			))...)
-			for _, tt := range out[len(out)-2:] {
-				shape := t.Shape()
-				tt.Shape = []uint64{shape[0], shape[1], shape[3], shape[4]}
-			}
+		case exaone45VisionTensor(t.Name()):
+			continue
 		default:
 			rest = append(rest, t)
 		}
 	}
 	return append(m.exaone4Model.Tensors(rest), out...)
+}
+
+func exaone45VisionTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
+}
+
+func (m *exaone45Model) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		name := m.projectorTensorName(t.Name())
+		if !exaone45VisionTensor(name) {
+			continue
+		}
+
+		switch {
+		case name == "v.patch_embd.weight" && len(t.Shape()) == 5:
+			out = append(out, exaone45PatchEmbedTensors(t)...)
+		case strings.Contains(name, "attn_qkv"):
+			out = append(out, m.splitVisionQKV(t, name)...)
+		default:
+			kind := t.Kind()
+			var writer io.WriterTo = t
+			if sourceDType(t) == "BF16" && kind == tensorKindFP16 {
+				kind = tensorKindBF16
+				writer = tensorBF16Writer{tensor: t}
+			}
+			out = append(out, &ggml.Tensor{Name: name, Kind: kind, Shape: slices.Clone(t.Shape()), WriterTo: writer})
+		}
+	}
+	return out
+}
+
+func (m *exaone45Model) projectorTensorName(name string) string {
+	if strings.HasPrefix(name, "v.merger.") {
+		name = strings.Replace(name, "v.merger.ln_q", "mm.input_norm", 1)
+		name = strings.Replace(name, "v.merger.mlp.0", "mm.0", 1)
+		name = strings.Replace(name, "v.merger.mlp.2", "mm.2", 1)
+	}
+	return name
+}
+
+func exaone45PatchEmbedTensors(t Tensor) []*ggml.Tensor {
+	shape := t.Shape()
+	if len(shape) != 5 || shape[2] != 2 {
+		return nil
+	}
+	outShape := []uint64{shape[0], shape[1], shape[3], shape[4]}
+	return []*ggml.Tensor{
+		{
+			Name:     "v.patch_embd.weight",
+			Kind:     tensorKindFP32,
+			Shape:    slices.Clone(outShape),
+			WriterTo: tensorFloat32Writer{tensor: t, repacker: qwenTemporalPatchEmbedSlice(0)},
+		},
+		{
+			Name:     "v.patch_embd.weight.1",
+			Kind:     tensorKindFP32,
+			Shape:    slices.Clone(outShape),
+			WriterTo: tensorFloat32Writer{tensor: t, repacker: qwenTemporalPatchEmbedSlice(1)},
+		},
+	}
+}
+
+func (m *exaone45Model) splitVisionQKV(t Tensor, name string) []*ggml.Tensor {
+	hiddenSize := cmp.Or(m.VisionModel.HiddenSize, uint32(0))
+	numHeads := cmp.Or(m.VisionModel.NumHeads, uint32(1))
+	numKVHeads := cmp.Or(m.VisionModel.NumKeyValueHeads, numHeads)
+	kvSize := hiddenSize * numKVHeads / numHeads
+	if hiddenSize == 0 || kvSize == 0 {
+		return slices.Collect(splitDim(t, 0,
+			split{Replacer: strings.NewReplacer("attn_qkv", "attn_q")},
+			split{Replacer: strings.NewReplacer("attn_qkv", "attn_k")},
+			split{Replacer: strings.NewReplacer("attn_qkv", "attn_v")},
+		))
+	}
+	return slices.Collect(splitDim(t, 0,
+		split{Replacer: strings.NewReplacer("attn_qkv", "attn_q"), dim: int(hiddenSize)},
+		split{Replacer: strings.NewReplacer("attn_qkv", "attn_k"), dim: int(kvSize)},
+		split{Replacer: strings.NewReplacer("attn_qkv", "attn_v"), dim: int(kvSize)},
+	))
 }
 
 func restoreExaoneMTPName(name string) string {
@@ -142,14 +242,6 @@ func restoreExaoneMTPName(name string) string {
 	return replacer.Replace(name)
 }
 
-func squeezeTemporalPatch(t tensor.Tensor) (tensor.Tensor, error) {
-	shape := t.Shape()
-	if len(shape) != 5 || shape[2] != 1 {
-		return t, nil
-	}
-	return t, t.Reshape(shape[0], shape[1], shape[3], shape[4])
-}
-
 func (m *exaone45Model) Replacements() []string {
 	replacements := []string{
 		"model.language_", "",
@@ -164,6 +256,9 @@ func (m *exaone45Model) Replacements() []string {
 		"merger.ln_q", "merger.ln_q",
 		"merger.mlp.0", "merger.mlp.0",
 		"merger.mlp.2", "merger.mlp.2",
+		"mlp.gate_proj", "ffn_gate",
+		"mlp.up_proj", "ffn_up",
+		"mlp.down_proj", "ffn_down",
 	}
 	return append(m.exaone4Model.Replacements(), replacements...)
 }
