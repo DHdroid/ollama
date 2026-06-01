@@ -10,6 +10,10 @@ import (
 
 type Exaone4Renderer struct{}
 
+func (r *Exaone4Renderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *Exaone4Renderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 	hasTools := len(tools) > 0

@@ -10,6 +10,10 @@ type Exaone45Renderer struct {
 	useImgTags bool
 }
 
+func (r *Exaone45Renderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *Exaone45Renderer) renderContent(message api.Message, imageOffset int) (string, int) {
 	content := strings.TrimSpace(message.Content)
 	if r.useImgTags {
