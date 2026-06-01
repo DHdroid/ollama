@@ -40,6 +40,15 @@ func (p *ExaoneParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *ExaoneParser) PreservedTokens() []string {
+	return []string{
+		exaoneThinkingOpenTag,
+		exaoneThinkingCloseTag,
+		exaoneToolCallOpenTag,
+		exaoneToolCallCloseTag,
+	}
+}
+
 func (p *ExaoneParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.buffer.Reset()
 	p.callIndex = 0

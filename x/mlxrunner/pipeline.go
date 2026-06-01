@@ -311,6 +311,26 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	}
 }
 
+func newModelCaches(m base.Model) []cache.Cache {
+	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
+		return cacheFactory.NewCaches()
+	}
+
+	caches := make([]cache.Cache, m.NumLayers())
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+	}
+	return caches
+}
+
+func freeCacheSet(caches []cache.Cache) {
+	for _, c := range caches {
+		if c != nil {
+			c.Free()
+		}
+	}
+}
+
 // decoder serializes sampled tokens into response chunks, holding bytes
 // whose UTF-8 sequence hasn't completed yet and the logprobs that belong
 // with those bytes so Content and Logprobs stay aligned when a chunk does
