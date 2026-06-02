@@ -2,6 +2,8 @@ package convert
 
 import (
 	"cmp"
+	"errors"
+	"io/fs"
 	"math"
 	"strings"
 
@@ -24,6 +26,7 @@ type exaone4Model struct {
 	LayerTypes            []string   `json:"layer_types"`
 	RopeParameters        ropeParams `json:"rope_parameters"`
 	RopeScaling           ropeParams `json:"rope_scaling"`
+	ChatTemplate          string     `json:"-"`
 }
 
 type ropeParams struct {
@@ -36,6 +39,20 @@ type ropeParams struct {
 }
 
 var _ ModelConverter = (*exaone4Model)(nil)
+var _ moreParser = (*exaone4Model)(nil)
+var _ tokenizerAdjuster = (*exaone4Model)(nil)
+
+func (m *exaone4Model) parseMore(fsys fs.FS) error {
+	bts, err := fs.ReadFile(fsys, "chat_template.jinja")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	m.ChatTemplate = string(bts)
+	return nil
+}
 
 func (m *exaone4Model) architecture() string {
 	return "exaone4"
@@ -64,7 +81,15 @@ func (m *exaone4Model) KV(t *Tokenizer) KV {
 	if pattern := m.slidingWindowPattern(); len(pattern) > 0 {
 		kv[arch+".attention.sliding_window_pattern"] = pattern
 	}
+	delete(kv, "tokenizer.ggml.scores")
 	return kv
+}
+
+func (m *exaone4Model) adjustTokenizer(t *Tokenizer) {
+	t.Pre = "exaone4"
+	if m.ChatTemplate != "" {
+		t.Template = m.ChatTemplate
+	}
 }
 
 func (m *exaone4Model) ropeParams() ropeParams {
@@ -112,8 +137,13 @@ func (m *exaone4Model) slidingWindowPattern() []bool {
 		return nil
 	}
 	out := make([]bool, len(m.LayerTypes))
+	anySliding := false
 	for i, layerType := range m.LayerTypes {
 		out[i] = layerType == "sliding_attention"
+		anySliding = anySliding || out[i]
+	}
+	if !anySliding {
+		return nil
 	}
 	return out
 }

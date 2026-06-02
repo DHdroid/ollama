@@ -417,6 +417,8 @@ func (c *isolatedKVCache) State() []*mlx.Array {
 		return []*mlx.Array{c.keys, c.values}
 	}
 	return []*mlx.Array{
+		c.keys,
+		c.values,
 		state[0].Concatenate(2, c.keys),
 		state[1].Concatenate(2, c.values),
 	}
@@ -535,7 +537,12 @@ func (c *speculativeRotatingKVCache) State() []*mlx.Array {
 	if oldK == nil || oldV == nil {
 		return []*mlx.Array{c.keys, c.values}
 	}
-	return []*mlx.Array{oldK.Concatenate(2, c.keys), oldV.Concatenate(2, c.values)}
+	return []*mlx.Array{
+		c.keys,
+		c.values,
+		oldK.Concatenate(2, c.keys),
+		oldV.Concatenate(2, c.values),
+	}
 }
 
 func (c *speculativeRotatingKVCache) commit(n int) {

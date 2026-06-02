@@ -535,7 +535,7 @@ func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbe
 	return &mtpDraftBatch{
 		tokens: mlx.Concatenate(draftTokens, 1),
 		spec:   spec,
-		state:  cacheState(draftCaches),
+		state:  cacheState(draftCallCaches),
 	}
 }
 
@@ -595,7 +595,7 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 		tokens: mlx.Concatenate(draftTokens, 1),
 		dist:   sampler.ConcatenateDistributions(draftDists),
 		spec:   spec,
-		state:  cacheState(draftCaches),
+		state:  cacheState(draftCallCaches),
 	}
 }
 
