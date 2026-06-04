@@ -3,6 +3,7 @@ package exaone4_5
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/models/exaone4"
 )
@@ -104,6 +105,31 @@ func TestMTPDraftDefaults(t *testing.T) {
 	defaults := (&Model{}).MTPDraftDefaults(false)
 	if !defaults.Enabled || defaults.InitialDraftTokens != 3 || defaults.MaxDraftTokens != 3 {
 		t.Fatalf("MTPDraftDefaults = %+v, want enabled initial=3 max=3", defaults)
+	}
+}
+
+func TestNewCachesDelegatesToLanguageModel(t *testing.T) {
+	m := &Model{LanguageModel: &exaone4.Model{
+		Config: &exaone4.Config{SlidingWindow: 4096},
+		Layers: []*exaone4.Layer{
+			{IsSliding: true},
+			{IsSliding: true},
+			{IsSliding: true},
+			{IsSliding: false},
+		},
+	}}
+
+	caches := m.NewCaches()
+	if len(caches) != 4 {
+		t.Fatalf("len(NewCaches()) = %d, want 4", len(caches))
+	}
+	for i := 0; i < 3; i++ {
+		if _, ok := caches[i].(*cache.RotatingKVCache); !ok {
+			t.Fatalf("cache[%d] = %T, want *RotatingKVCache", i, caches[i])
+		}
+	}
+	if _, ok := caches[3].(*cache.KVCache); !ok {
+		t.Fatalf("cache[3] = %T, want *KVCache", caches[3])
 	}
 }
 

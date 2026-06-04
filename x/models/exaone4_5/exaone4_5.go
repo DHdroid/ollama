@@ -102,6 +102,10 @@ func (m *Model) NumLayers() int {
 	return m.LanguageModel.NumLayers()
 }
 
+func (m *Model) NewCaches() []cache.Cache {
+	return m.LanguageModel.NewCaches()
+}
+
 func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.LanguageModel.Tokenizer()
 }
