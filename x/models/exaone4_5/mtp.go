@@ -56,6 +56,7 @@ func NewMTPModel(root *model.Root, target base.Model) (base.DraftModel, error) {
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
 	}
 	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.BuildRopeFreqs()
 
 	return &MTPModel{
 		target: targetModel,

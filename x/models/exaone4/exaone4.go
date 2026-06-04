@@ -146,7 +146,6 @@ func FinalizeConfig(cfg Config) (Config, error) {
 		cfg.MaxPositionEmbeddings = 8192
 	}
 	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
-	cfg.RopeFreqs = buildLlama3RopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, cfg.RopeParameters)
 	return cfg, nil
 }
 
@@ -196,6 +195,10 @@ func buildLlama3RopeFreqs(dim int, base float32, rp *RopeParameters) *mlx.Array 
 	arr := mlx.FromValues(freqs, half)
 	mlx.Eval(arr)
 	return arr
+}
+
+func (cfg *Config) BuildRopeFreqs() {
+	cfg.RopeFreqs = buildLlama3RopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, cfg.RopeParameters)
 }
 
 func resolveTensorPathLayout(tensors map[string]*mlx.Array, layouts []TensorPathLayout) TensorPathLayout {
@@ -264,6 +267,7 @@ func NewModelWithConfig(root *model.Root, cfg Config, opts ...ModelOption) (base
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
 	}
 	cfg.TensorQuant = root.AllTensorQuant()
+	cfg.BuildRopeFreqs()
 
 	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
 	if err != nil {

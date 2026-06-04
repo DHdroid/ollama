@@ -96,9 +96,6 @@ func TestParseTextConfigRopeParameters(t *testing.T) {
 	if cfg.RopeTheta != 1000000 {
 		t.Fatalf("RopeTheta = %v, want 1000000", cfg.RopeTheta)
 	}
-	if cfg.RopeFreqs == nil {
-		t.Fatal("RopeFreqs was not built from rope_parameters")
-	}
 }
 
 func TestMTPDraftDefaults(t *testing.T) {
