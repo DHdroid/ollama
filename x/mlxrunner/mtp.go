@@ -239,7 +239,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 		draftCount := 0
 		if draftBatch != nil && draftBatch.tokens != nil {
 			draftCount = draftBatch.tokens.Dim(1)
-			arrays := append([]*mlx.Array{baseLogits, draftBatch.tokens}, draftBatch.state...)
+			arrays := append([]*mlx.Array{baseLogits, hidden, draftBatch.tokens}, draftBatch.state...)
 			mlx.Pin(arrays...)
 			mlx.Eval(arrays...)
 			mlx.Sweep()
@@ -255,7 +255,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 			t0 = time.Now()
 			next, accepted, refill, done, err = r.acceptMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, hidden, draftBatch.tokens, &final, &generated, &stats, mtpOpts)
 			stats.validateDuration += time.Since(t0)
-			arrays := append([]*mlx.Array{baseLogits, draftBatch.tokens}, draftBatch.state...)
+			arrays := append([]*mlx.Array{baseLogits, hidden, draftBatch.tokens}, draftBatch.state...)
 			mlx.Unpin(arrays...)
 			if err != nil {
 				return err
@@ -395,7 +395,7 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 		var candidateArrays []*mlx.Array
 		if candidates != nil {
 			draftCount = candidates.tokens.Dim(1)
-			candidateArrays = append([]*mlx.Array{baseLogits}, candidates.Arrays()...)
+			candidateArrays = append([]*mlx.Array{baseLogits, hidden}, candidates.Arrays()...)
 			mlx.Pin(candidateArrays...)
 			mlx.Sweep()
 		}
@@ -853,9 +853,15 @@ func mtpRefillFromSequence(currentHidden, hiddenSeq *mlx.Array, draftIDs []int, 
 	nextIDs = append(nextIDs, nextID)
 
 	hidden := currentHidden
+	hiddenLen := 1
 	if accepted > 0 {
-		hidden = hidden.Concatenate(1, hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, accepted), mlx.Slice()))
+		extra := min(accepted, hiddenSeq.Dim(1))
+		if extra > 0 {
+			hidden = hidden.Concatenate(1, hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, extra), mlx.Slice()))
+			hiddenLen += extra
+		}
 	}
+	nextIDs = trimMTPRefillIDs(nextIDs, hiddenLen)
 
 	return &mtpRefillContext{
 		nextInputIDs: mlx.FromValues(nextIDs, 1, len(nextIDs)),
@@ -872,15 +878,25 @@ func mtpRefillFromHiddenList(currentHidden *mlx.Array, acceptedHidden []*mlx.Arr
 	nextIDs = append(nextIDs, nextID)
 
 	hidden := currentHidden
+	hiddenLen := 1
 	for _, h := range acceptedHidden[:accepted] {
 		hidden = hidden.Concatenate(1, h)
+		hiddenLen++
 	}
+	nextIDs = trimMTPRefillIDs(nextIDs, hiddenLen)
 
 	return &mtpRefillContext{
 		nextInputIDs: mlx.FromValues(nextIDs, 1, len(nextIDs)),
 		hidden:       hidden,
 		position:     position,
 	}
+}
+
+func trimMTPRefillIDs(ids []int32, hiddenLen int) []int32 {
+	if hiddenLen < len(ids) {
+		return ids[:hiddenLen]
+	}
+	return ids
 }
 
 func int32sToInts(values []int32) []int {

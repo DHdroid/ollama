@@ -153,6 +153,9 @@ func (m *MTPModel) NewCaches() []cache.Cache {
 }
 
 func (m *MTPModel) AppendContext(target base.MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) {
+	if nextDims, hiddenDims := nextInputIDs.Dims(), hidden.Dims(); len(nextDims) == 2 && len(hiddenDims) == 3 && nextDims[1] > hiddenDims[1] {
+		nextInputIDs = nextInputIDs.Slice(mlx.Slice(), mlx.Slice(0, hiddenDims[1]))
+	}
 	tokenEmbedding := target.TokenEmbeddings(nextInputIDs)
 	inputs := tokenEmbedding.Concatenate(-1, hidden)
 	m.forward(inputs, position, caches)
