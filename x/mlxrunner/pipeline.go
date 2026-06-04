@@ -81,11 +81,11 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
-	var cachedMTPDraft base.CachedMTPDraftModel
+	var eagleMTPDraft base.EagleMTPDraftModel
 	var mtpCaches []cache.Cache
 	if r.useGreedyMTP(request.SamplerOpts) || r.useSampleMTP(request.SamplerOpts) {
-		if draft, ok := r.Draft.(base.CachedMTPDraftModel); ok {
-			cachedMTPDraft = draft
+		if draft, ok := r.Draft.(base.EagleMTPDraftModel); ok {
+			eagleMTPDraft = draft
 			mtpCaches = draft.NewCaches()
 			defer freeCacheSet(mtpCaches)
 		}
@@ -123,7 +123,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		mlx.Eval(state...)
 	}
 
-	if cachedMTPDraft != nil {
+	if eagleMTPDraft != nil {
 		targetCachedPrefix := len(inputs) - len(tokens)
 		mtpCachedPrefix := min(targetCachedPrefix, len(inputs)-1)
 		if targetCachedPrefix > 0 {
@@ -150,7 +150,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 					if appendEnd < end {
 						appendHidden = hidden.Slice(mlx.Slice(), mlx.Slice(0, appendEnd-start), mlx.Slice())
 					}
-					cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start), mtpCaches)
+					eagleMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start), mtpCaches)
 				}
 				mlx.Sweep()
 				materializeCaches(rebuildCaches, mtpCaches)
@@ -196,16 +196,16 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
 		}
-		if cachedMTPDraft != nil {
+		if eagleMTPDraft != nil {
 			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
 			targetHidden := r.Model.Forward(b, caches)
 			nextInputIDs := mlx.FromValues(tokens[processed+1:processed+n+1], 1, n)
-			cachedMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position), mtpCaches)
+			eagleMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position), mtpCaches)
 		} else {
 			r.Model.Forward(b, caches)
 		}
 		mlx.Sweep()
-		if cachedMTPDraft != nil {
+		if eagleMTPDraft != nil {
 			materializeCaches(caches, mtpCaches)
 		} else {
 			materializeCaches()

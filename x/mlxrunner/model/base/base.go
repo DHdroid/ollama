@@ -52,8 +52,9 @@ type MTPDraftModel interface {
 	Draft(inputEmbeds *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array)
 }
 
-// CachedMTPDraftModel is an MTP draft model with its own attention KV cache.
-type CachedMTPDraftModel interface {
+// EagleMTPDraftModel is an EAGLE-style MTP draft model with its own attention
+// KV cache. It refills draft context from target-model hidden states.
+type EagleMTPDraftModel interface {
 	MTPDraftModel
 	NewCaches() []cache.Cache
 	// AppendContext appends target hidden states at their original positions,

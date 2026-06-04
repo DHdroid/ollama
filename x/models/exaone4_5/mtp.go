@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	_ base.DraftModel          = (*MTPModel)(nil)
-	_ base.MTPDraftModel       = (*MTPModel)(nil)
-	_ base.CachedMTPDraftModel = (*MTPModel)(nil)
+	_ base.DraftModel         = (*MTPModel)(nil)
+	_ base.MTPDraftModel      = (*MTPModel)(nil)
+	_ base.EagleMTPDraftModel = (*MTPModel)(nil)
 )
 
 type MTPModel struct {

@@ -9,11 +9,11 @@ import (
 )
 
 var (
-	_ base.Model               = (*Model)(nil)
-	_ base.MTPEmbeddingModel   = (*Model)(nil)
-	_ base.DraftModel          = (*MTPModel)(nil)
-	_ base.MTPDraftModel       = (*MTPModel)(nil)
-	_ base.CachedMTPDraftModel = (*MTPModel)(nil)
+	_ base.Model              = (*Model)(nil)
+	_ base.MTPEmbeddingModel  = (*Model)(nil)
+	_ base.DraftModel         = (*MTPModel)(nil)
+	_ base.MTPDraftModel      = (*MTPModel)(nil)
+	_ base.EagleMTPDraftModel = (*MTPModel)(nil)
 )
 
 func TestParseTextConfig(t *testing.T) {

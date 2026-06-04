@@ -170,6 +170,7 @@ func (r *Runner) useSampleMTP(opts sampler.Options) bool {
 func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, session *cacheSession, caches []cache.Cache, draftCaches []cache.Cache, seed []int32, position *int, started time.Time) error {
 	targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
 	draft := r.Draft.(base.MTPDraftModel)
+	eagleDraft, _ := draft.(base.EagleMTPDraftModel)
 	mtpOpts := r.loadMTPOptions(false)
 	stats := mtpStats{maxDraft: mtpOpts.initialDraftTokens}
 	draftLimit := mtpOpts.initialDraftTokens
@@ -189,8 +190,8 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 	seedInput := mlx.FromValues(seed, 1, len(seed))
 	hidden := targetForward(seedInput)
 	current := sampler.Result{Token: greedyTokenFromLogits(r.lastLogits(hidden))}
-	if cachedDraft, ok := draft.(base.CachedMTPDraftModel); ok && len(draftCaches) > 0 {
-		cachedDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition, draftCaches)
+	if eagleDraft != nil && len(draftCaches) > 0 {
+		eagleDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition, draftCaches)
 	}
 	mlx.Pin(current.Arrays()...)
 	mlx.Sweep()
@@ -250,13 +251,17 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 			next = sampler.Result{Token: greedyTokenFromLogits(baseLogits)}
 		} else {
 			var accepted int
+			var refill *mtpRefillContext
 			t0 = time.Now()
-			next, accepted, done, err = r.acceptMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, draftBatch.tokens, draftBatch.spec, &final, &generated, &stats, mtpOpts)
+			next, accepted, refill, done, err = r.acceptMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, hidden, draftBatch.tokens, &final, &generated, &stats, mtpOpts)
 			stats.validateDuration += time.Since(t0)
 			arrays := append([]*mlx.Array{baseLogits, draftBatch.tokens}, draftBatch.state...)
 			mlx.Unpin(arrays...)
 			if err != nil {
 				return err
+			}
+			if eagleDraft != nil && refill != nil && len(draftCaches) > 0 {
+				eagleDraft.AppendContext(targetEmbeddings, refill.nextInputIDs, refill.hidden, refill.position, draftCaches)
 			}
 			stats.accepted += accepted
 			switch {
@@ -320,6 +325,7 @@ func (r *Runner) runGreedyMTPDecode(ctx context.Context, request Request, sessio
 func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, session *cacheSession, caches []cache.Cache, draftCaches []cache.Cache, seed []int32, position *int, started time.Time) error {
 	targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
 	draft := r.Draft.(base.MTPDraftModel)
+	eagleDraft, _ := draft.(base.EagleMTPDraftModel)
 	mtpOpts := r.loadMTPOptions(true)
 	stats := mtpStats{maxDraft: mtpOpts.initialDraftTokens}
 	draftLimit := mtpOpts.initialDraftTokens
@@ -339,8 +345,8 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 	seedInput := mlx.FromValues(seed, 1, len(seed))
 	hidden := targetForward(seedInput)
 	current := r.Sampler.Sample([]int{pipelineSlot}, r.lastLogits(hidden))
-	if cachedDraft, ok := draft.(base.CachedMTPDraftModel); ok && len(draftCaches) > 0 {
-		cachedDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition, draftCaches)
+	if eagleDraft != nil && len(draftCaches) > 0 {
+		eagleDraft.AppendContext(targetEmbeddings, mtpSeedNextInput(seed, current.Token), hidden, seedPosition, draftCaches)
 	}
 	mlx.Pin(current.Arrays()...)
 	mlx.Sweep()
@@ -401,12 +407,16 @@ func (r *Runner) runSampleMTPDecode(ctx context.Context, request Request, sessio
 			next = r.Sampler.Sample([]int{pipelineSlot}, baseLogits)
 		} else {
 			var accepted int
+			var refill *mtpRefillContext
 			t0 = time.Now()
-			next, accepted, done, err = r.acceptSampleMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, candidates, &final, &generated, &stats)
+			next, accepted, refill, done, err = r.acceptSampleMTPDrafts(ctx, request, session, &dec, caches, position, baseLogits, hidden, candidates, &final, &generated, &stats)
 			stats.validateDuration += time.Since(t0)
 			mlx.Unpin(candidateArrays...)
 			if err != nil {
 				return err
+			}
+			if eagleDraft != nil && refill != nil && len(draftCaches) > 0 {
+				eagleDraft.AppendContext(targetEmbeddings, refill.nextInputIDs, refill.hidden, refill.position, draftCaches)
 			}
 			stats.accepted += accepted
 			switch {
@@ -471,7 +481,6 @@ type mtpDraftCandidates struct {
 	tokens *mlx.Array
 	// dist is the proposal distribution used to sample each drafted token.
 	dist  sampler.Distribution
-	spec  *cache.Speculation
 	state []*mlx.Array
 }
 
@@ -485,8 +494,13 @@ func (c *mtpDraftCandidates) Arrays() []*mlx.Array {
 
 type mtpDraftBatch struct {
 	tokens *mlx.Array
-	spec   *cache.Speculation
 	state  []*mlx.Array
+}
+
+type mtpRefillContext struct {
+	nextInputIDs *mlx.Array
+	hidden       *mlx.Array
+	position     int32
 }
 
 func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbeddingModel, token *mlx.Array, hidden *mlx.Array, caches []cache.Cache, draftCaches []cache.Cache, position int32, maxDraft int) *mtpDraftBatch {
@@ -534,7 +548,6 @@ func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbe
 	}
 	return &mtpDraftBatch{
 		tokens: mlx.Concatenate(draftTokens, 1),
-		spec:   spec,
 		state:  cacheState(draftCallCaches),
 	}
 }
@@ -594,7 +607,6 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 	return &mtpDraftCandidates{
 		tokens: mlx.Concatenate(draftTokens, 1),
 		dist:   sampler.ConcatenateDistributions(draftDists),
-		spec:   spec,
 		state:  cacheState(draftCallCaches),
 	}
 }
@@ -609,23 +621,23 @@ func cacheState(caches []cache.Cache) []*mlx.Array {
 	return state
 }
 
-func (r *Runner) acceptMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, draftSpec *cache.Speculation, final *CompletionResponse, generated *int, stats *mtpStats, opts mtpOptions) (sampler.Result, int, bool, error) {
+func (r *Runner) acceptMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits, currentHidden *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int, stats *mtpStats, opts mtpOptions) (sampler.Result, int, *mtpRefillContext, bool, error) {
 	if opts.serialValidate {
 		stats.serial++
-		return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, draftTokens, draftSpec, final, generated)
+		return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, currentHidden, draftTokens, final, generated)
 	}
 
 	specCaches, spec, ok := cache.BeginSpeculation(caches)
 	if ok {
 		stats.batched++
-		return r.acceptMTPDraftsBatched(ctx, request, session, dec, caches, specCaches, spec, position, baseLogits, draftTokens, draftSpec, final, generated, stats, opts)
+		return r.acceptMTPDraftsBatched(ctx, request, session, dec, caches, specCaches, spec, position, baseLogits, currentHidden, draftTokens, final, generated, stats, opts)
 	}
 
 	stats.serial++
-	return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, draftTokens, draftSpec, final, generated)
+	return r.acceptMTPDraftsSerial(ctx, request, session, dec, caches, position, baseLogits, currentHidden, draftTokens, final, generated)
 }
 
-func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, session *cacheSession, dec *decoder, liveCaches []cache.Cache, caches []cache.Cache, spec *cache.Speculation, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, draftSpec *cache.Speculation, final *CompletionResponse, generated *int, stats *mtpStats, opts mtpOptions) (sampler.Result, int, bool, error) {
+func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, session *cacheSession, dec *decoder, liveCaches []cache.Cache, caches []cache.Cache, spec *cache.Speculation, position *int, baseLogits, currentHidden *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int, stats *mtpStats, opts mtpOptions) (sampler.Result, int, *mtpRefillContext, bool, error) {
 	before := *position
 	draftCount := draftTokens.Dim(1)
 	hiddenSeq := r.Model.Forward(&batch.Batch{
@@ -643,7 +655,7 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 	draftIDs := draftTokens.Ints()
 	selectedIDs := selectedTokens.Ints()
 	if len(selectedIDs) < draftCount+1 {
-		return sampler.Result{}, accepted, false, fmt.Errorf("mtp validation produced %d tokens for %d draft tokens", len(selectedIDs), draftCount)
+		return sampler.Result{}, accepted, nil, false, fmt.Errorf("mtp validation produced %d tokens for %d draft tokens", len(selectedIDs), draftCount)
 	}
 
 	for i, id := range draftIDs {
@@ -663,10 +675,12 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 		r.compareMTPBatchedWithSerial(ctx, liveCaches, before, baseLogits, hiddenSeq, draftIDs, selectedIDs, accepted, draftCount, stats)
 	}
 	spec.Commit(accepted)
-	if draftSpec != nil {
-		draftSpec.Commit(1 + accepted)
-	}
 	*position = before + accepted
+
+	var refill *mtpRefillContext
+	if !done {
+		refill = mtpRefillFromSequence(currentHidden, hiddenSeq, draftIDs, int32(selectedIDs[accepted]), accepted, int32(before-1))
+	}
 
 	for _, id := range draftIDs[:accepted] {
 		if *generated >= request.Options.NumPredict {
@@ -677,7 +691,7 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 		var err error
 		done, err = r.emitMTPToken(ctx, request, session, dec, res, final)
 		if err != nil {
-			return sampler.Result{}, accepted, done, err
+			return sampler.Result{}, accepted, refill, done, err
 		}
 		if !done {
 			(*generated)++
@@ -688,19 +702,21 @@ func (r *Runner) acceptMTPDraftsBatched(ctx context.Context, request Request, se
 	}
 
 	if done || *generated >= request.Options.NumPredict {
-		return sampler.Result{}, accepted, true, nil
+		return sampler.Result{}, accepted, nil, true, nil
 	}
 	if next.Token == nil {
 		next = sampler.Result{Token: mtpTokenAt(selectedTokens, draftCount)}
 	}
-	return next, accepted, false, nil
+	return next, accepted, refill, false, nil
 }
 
-func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, candidates *mtpDraftCandidates, final *CompletionResponse, generated *int, stats *mtpStats) (sampler.Result, int, bool, error) {
+func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits, currentHidden *mlx.Array, candidates *mtpDraftCandidates, final *CompletionResponse, generated *int, stats *mtpStats) (sampler.Result, int, *mtpRefillContext, bool, error) {
 	specCaches, spec, ok := cache.BeginSpeculation(caches)
 	if !ok {
 		stats.serial++
-		return r.Sampler.Sample([]int{pipelineSlot}, baseLogits), 0, false, nil
+		next := r.Sampler.Sample([]int{pipelineSlot}, baseLogits)
+		refill := mtpRefillFromNextToken(currentHidden, next.Token, int32(*position-1))
+		return next, 0, refill, false, nil
 	}
 	stats.batched++
 
@@ -727,7 +743,7 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 		accepted++
 	}
 	if accepted > draftCount {
-		return sampler.Result{}, 0, false, fmt.Errorf("mtp sample validation accepted %d tokens for %d draft tokens", accepted, draftCount)
+		return sampler.Result{}, 0, nil, false, fmt.Errorf("mtp sample validation accepted %d tokens for %d draft tokens", accepted, draftCount)
 	}
 
 	commitIDs := make([]int32, 0, accepted+1)
@@ -743,9 +759,6 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 	}
 
 	spec.Commit(accepted)
-	if candidates.spec != nil {
-		candidates.spec.Commit(1 + accepted)
-	}
 	*position = before + accepted
 
 	for _, id := range draftIDs[:accepted] {
@@ -757,7 +770,7 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 		var err error
 		done, err = r.emitMTPToken(ctx, request, session, dec, res, final)
 		if err != nil {
-			return sampler.Result{}, accepted, done, err
+			return sampler.Result{}, accepted, nil, done, err
 		}
 		if !done {
 			(*generated)++
@@ -769,7 +782,7 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 
 	if done || *generated >= request.Options.NumPredict {
 		r.Sampler.Commit(pipelineSlot, commitIDs)
-		return sampler.Result{}, accepted, true, nil
+		return sampler.Result{}, accepted, nil, true, nil
 	}
 
 	var nextToken *mlx.Array
@@ -782,8 +795,9 @@ func (r *Runner) acceptSampleMTPDrafts(ctx context.Context, request Request, ses
 	nextID := int32(tokenID(nextToken))
 	commitIDs = append(commitIDs, nextID)
 	r.Sampler.Commit(pipelineSlot, commitIDs)
+	refill := mtpRefillFromSequence(currentHidden, hiddenSeq, int32sToInts(commitIDs[:accepted]), nextID, accepted, int32(before-1))
 
-	return sampler.Result{Token: nextToken}, accepted, false, nil
+	return sampler.Result{Token: nextToken}, accepted, refill, false, nil
 }
 
 func (r *Runner) mtpSampleAcceptedMask(targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
@@ -821,6 +835,60 @@ func mtpSeedNextInput(seed []int32, next *mlx.Array) *mlx.Array {
 		return nextInput
 	}
 	return mlx.FromValues(seed[1:], 1, len(seed)-1).Concatenate(1, nextInput)
+}
+
+func mtpRefillFromNextToken(currentHidden, nextToken *mlx.Array, position int32) *mtpRefillContext {
+	return &mtpRefillContext{
+		nextInputIDs: mtpTokenInput(nextToken),
+		hidden:       currentHidden,
+		position:     position,
+	}
+}
+
+func mtpRefillFromSequence(currentHidden, hiddenSeq *mlx.Array, draftIDs []int, nextID int32, accepted int, position int32) *mtpRefillContext {
+	nextIDs := make([]int32, 0, accepted+1)
+	for _, id := range draftIDs[:accepted] {
+		nextIDs = append(nextIDs, int32(id))
+	}
+	nextIDs = append(nextIDs, nextID)
+
+	hidden := currentHidden
+	if accepted > 0 {
+		hidden = hidden.Concatenate(1, hiddenSeq.Slice(mlx.Slice(), mlx.Slice(0, accepted), mlx.Slice()))
+	}
+
+	return &mtpRefillContext{
+		nextInputIDs: mlx.FromValues(nextIDs, 1, len(nextIDs)),
+		hidden:       hidden,
+		position:     position,
+	}
+}
+
+func mtpRefillFromHiddenList(currentHidden *mlx.Array, acceptedHidden []*mlx.Array, draftIDs []int, nextID int32, accepted int, position int32) *mtpRefillContext {
+	nextIDs := make([]int32, 0, accepted+1)
+	for _, id := range draftIDs[:accepted] {
+		nextIDs = append(nextIDs, int32(id))
+	}
+	nextIDs = append(nextIDs, nextID)
+
+	hidden := currentHidden
+	for _, h := range acceptedHidden[:accepted] {
+		hidden = hidden.Concatenate(1, h)
+	}
+
+	return &mtpRefillContext{
+		nextInputIDs: mlx.FromValues(nextIDs, 1, len(nextIDs)),
+		hidden:       hidden,
+		position:     position,
+	}
+}
+
+func int32sToInts(values []int32) []int {
+	ints := make([]int, len(values))
+	for i, value := range values {
+		ints[i] = int(value)
+	}
+	return ints
 }
 
 func mtpTokenVector(token *mlx.Array) *mlx.Array {
@@ -934,20 +1002,20 @@ func top2FromLogits(logits *mlx.Array) mtpTop2 {
 	}
 }
 
-func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits *mlx.Array, draftTokens *mlx.Array, draftSpec *cache.Speculation, final *CompletionResponse, generated *int) (sampler.Result, int, bool, error) {
+func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, session *cacheSession, dec *decoder, caches []cache.Cache, position *int, baseLogits, currentHidden *mlx.Array, draftTokens *mlx.Array, final *CompletionResponse, generated *int) (sampler.Result, int, *mtpRefillContext, bool, error) {
 	logits := baseLogits
 	accepted := 0
 	draftIDs := draftTokens.Ints()
+	acceptedHidden := make([]*mlx.Array, 0, len(draftIDs))
 
 	for _, id := range draftIDs {
 		selected := greedyTokenFromLogits(logits)
 		mlx.Eval(selected)
 		selectedID := tokenID(selected)
 		if selectedID != id {
-			if draftSpec != nil {
-				draftSpec.Commit(1 + accepted)
-			}
-			return sampler.Result{Token: mlx.FromValues([]int32{int32(selectedID)}, 1)}, accepted, false, nil
+			next := mlx.FromValues([]int32{int32(selectedID)}, 1)
+			refill := mtpRefillFromHiddenList(currentHidden, acceptedHidden, draftIDs, int32(selectedID), accepted, int32(*position-accepted-1))
+			return sampler.Result{Token: next}, accepted, refill, false, nil
 		}
 
 		hidden := r.Model.Forward(&batch.Batch{
@@ -957,29 +1025,28 @@ func (r *Runner) acceptMTPDraftsSerial(ctx context.Context, request Request, ses
 		}, caches)
 		(*position)++
 		accepted++
+		acceptedHidden = append(acceptedHidden, hidden)
 
 		res := sampler.Result{Token: mlx.FromValues([]int32{int32(id)}, 1)}
 		done, err := r.emitMTPToken(ctx, request, session, dec, res, final)
 		if err != nil {
-			return sampler.Result{}, accepted, done, err
+			return sampler.Result{}, accepted, nil, done, err
 		}
 		if !done {
 			(*generated)++
 		}
 		if done || *generated >= request.Options.NumPredict {
-			if draftSpec != nil {
-				draftSpec.Commit(1 + accepted)
-			}
-			return sampler.Result{}, accepted, true, nil
+			return sampler.Result{}, accepted, nil, true, nil
 		}
 
 		logits = r.lastLogits(hidden)
 	}
 
-	if draftSpec != nil {
-		draftSpec.Commit(1 + accepted)
-	}
-	return sampler.Result{Token: greedyTokenFromLogits(logits)}, accepted, false, nil
+	next := greedyTokenFromLogits(logits)
+	mlx.Eval(next)
+	nextID := int32(tokenID(next))
+	refill := mtpRefillFromHiddenList(currentHidden, acceptedHidden, draftIDs, nextID, accepted, int32(*position-accepted-1))
+	return sampler.Result{Token: next}, accepted, refill, false, nil
 }
 
 func (r *Runner) emitMTPToken(ctx context.Context, request Request, session *cacheSession, dec *decoder, res sampler.Result, final *CompletionResponse) (bool, error) {
