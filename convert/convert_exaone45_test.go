@@ -34,7 +34,7 @@ func TestExaone45SplitsTextAndProjector(t *testing.T) {
 	m.Preprocessor.ImageStd = []float32{0.4, 0.5, 0.6}
 	m.ChatTemplate = "{% set test = true %}"
 
-	kv := m.KV(testTokenizer())
+	kv := m.KV(testExaoneTokenizer())
 	if got := kv.String("general.architecture"); got != "exaone4" {
 		t.Fatalf("architecture = %q, want exaone4", got)
 	}
@@ -54,7 +54,7 @@ func TestExaone45SplitsTextAndProjector(t *testing.T) {
 		t.Fatal("text KV should not contain vision metadata")
 	}
 
-	tokenizer := testTokenizer()
+	tokenizer := testExaoneTokenizer()
 	m.adjustTokenizer(tokenizer)
 	if got := tokenizer.Pre; got != "exaone-moe" {
 		t.Fatalf("tokenizer pre = %q, want exaone-moe", got)
@@ -63,7 +63,7 @@ func TestExaone45SplitsTextAndProjector(t *testing.T) {
 		t.Fatalf("tokenizer template = %q, want chat template", got)
 	}
 
-	projectorKV := m.ProjectorKV(testTokenizer())
+	projectorKV := m.ProjectorKV(testExaoneTokenizer())
 	if got := projectorKV.String("general.architecture"); got != "clip" {
 		t.Fatalf("projector architecture = %q, want clip", got)
 	}
@@ -113,7 +113,7 @@ func TestExaone45SplitsTextAndProjector(t *testing.T) {
 	postLN := &fakeTensor{name: "v.merger.ln_q.weight", shape: []uint64{2048}, data: slices.Repeat([]float32{1}, 2048)}
 	mtp := &fakeTensor{name: "mtp.layers.0.self_attn.q_proj.weight", shape: []uint64{2, 2}, data: slices.Repeat([]float32{1}, 4)}
 	mtpFC := &fakeTensor{name: "mtp.fc.weight", shape: []uint64{4, 2}, data: slices.Repeat([]float32{1}, 8)}
-	text := m.TextTensors([]Tensor{patch, qkvWeight, mtp}, testTokenizer())
+	text := m.TextTensors([]Tensor{patch, qkvWeight, mtp}, testExaoneTokenizer())
 	textNames := make(map[string][]uint64)
 	for _, tt := range text {
 		textNames[tt.Name] = tt.Shape
@@ -124,7 +124,7 @@ func TestExaone45SplitsTextAndProjector(t *testing.T) {
 	if _, ok := textNames["blk.64.self_attn.q_proj.weight"]; !ok {
 		t.Fatal("mtp layer tensor was not emitted as final nextn block")
 	}
-	text = m.TextTensors([]Tensor{mtpFC}, testTokenizer())
+	text = m.TextTensors([]Tensor{mtpFC}, testExaoneTokenizer())
 	if len(text) != 1 || text[0].Name != "blk.64.nextn.eh_proj.weight" {
 		t.Fatalf("mtp fc tensor = %#v, want blk.64.nextn.eh_proj.weight", text)
 	}

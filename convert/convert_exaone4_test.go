@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-func testTokenizer() *Tokenizer {
-	return &Tokenizer{Vocabulary: &Vocabulary{Model: "gpt2", Tokens: []string{"a"}, Scores: []float32{0}, Types: []int32{0}}, Pre: "exaone"}
+func testExaoneTokenizer() *Tokenizer {
+	return &Tokenizer{Vocabulary: &Vocabulary{Model: "exaone", Tokens: []string{"a"}, Scores: []float32{0}, Types: []int32{0}}, Pre: "exaone"}
 }
 
 func TestExaone4KVAndReplacements(t *testing.T) {
@@ -28,7 +28,7 @@ func TestExaone4KVAndReplacements(t *testing.T) {
 	m.RopeParameters.HighFreqFactor = 4
 	m.RopeParameters.OriginalMaxPositionEmbeddings = 8192
 
-	kv := m.KV(testTokenizer())
+	kv := m.KV(testExaoneTokenizer())
 	if got := kv.String("general.architecture"); got != "exaone4" {
 		t.Fatalf("architecture = %q, want exaone4", got)
 	}
@@ -64,7 +64,7 @@ func TestExaone4KVAndReplacements(t *testing.T) {
 		t.Fatalf("rope tensor = %#v, want one rope_freqs.weight[32]", out)
 	}
 
-	tokenizer := testTokenizer()
+	tokenizer := testExaoneTokenizer()
 	m.ChatTemplate = "{% set exaone4 = true %}"
 	m.adjustTokenizer(tokenizer)
 	if got := tokenizer.Pre; got != "exaone4" {
@@ -91,7 +91,7 @@ func TestExaone4SlidingWindowPattern(t *testing.T) {
 		SlidingWindowPattern:  "LLLG",
 	}
 
-	kv := m.KV(testTokenizer())
+	kv := m.KV(testExaoneTokenizer())
 	if got := kv["exaone4.attention.sliding_window"]; got != uint32(4096) {
 		t.Fatalf("sliding window = %v, want 4096", got)
 	}

@@ -47,9 +47,11 @@ type exaone45Model struct {
 	ChatTemplate string `json:"-"`
 }
 
-var _ MultimodalConverter = (*exaone45Model)(nil)
-var _ moreParser = (*exaone45Model)(nil)
-var _ tokenizerAdjuster = (*exaone45Model)(nil)
+var (
+	_ MultimodalConverter = (*exaone45Model)(nil)
+	_ moreParser          = (*exaone45Model)(nil)
+	_ tokenizerAdjuster   = (*exaone45Model)(nil)
+)
 
 func (m *exaone45Model) parseMore(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "preprocessor_config.json")
@@ -158,18 +160,6 @@ func (m *exaone45Model) visionWindowAttentionPattern() uint32 {
 		return uint32(m.VisionModel.FullAttnBlocks[0] + 1)
 	}
 	return 7
-}
-
-func moveArchKV(kv KV, oldArch, newArch string) {
-	oldPrefix := oldArch + "."
-	for _, key := range slices.Sorted(kv.Keys()) {
-		if !strings.HasPrefix(key, oldPrefix) {
-			continue
-		}
-		value := kv[key]
-		delete(kv, key)
-		kv[newArch+"."+strings.TrimPrefix(key, oldPrefix)] = value
-	}
 }
 
 func (m *exaone45Model) Tensors(ts []Tensor) []*ggml.Tensor {

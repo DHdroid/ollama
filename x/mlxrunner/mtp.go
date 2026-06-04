@@ -509,7 +509,7 @@ func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbe
 	lastHidden := hidden
 	draftTokens := make([]*mlx.Array, 0, maxDraft)
 
-	for step := 0; step < maxDraft; step++ {
+	for step := range maxDraft {
 		tokenEmbedding := target.TokenEmbeddings(lastToken)
 		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
 		stepPosition := position
@@ -561,7 +561,7 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 	draftDists := make([]sampler.Distribution, 0, maxDraft)
 	var prefix *mlx.Array
 
-	for step := 0; step < maxDraft; step++ {
+	for step := range maxDraft {
 		tokenEmbedding := target.TokenEmbeddings(lastToken)
 		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
 		stepPosition := position

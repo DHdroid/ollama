@@ -38,9 +38,11 @@ type ropeParams struct {
 	OriginalMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
 }
 
-var _ ModelConverter = (*exaone4Model)(nil)
-var _ moreParser = (*exaone4Model)(nil)
-var _ tokenizerAdjuster = (*exaone4Model)(nil)
+var (
+	_ ModelConverter    = (*exaone4Model)(nil)
+	_ moreParser        = (*exaone4Model)(nil)
+	_ tokenizerAdjuster = (*exaone4Model)(nil)
+)
 
 func (m *exaone4Model) parseMore(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "chat_template.jinja")
@@ -169,7 +171,7 @@ func (m *exaone4Model) ropeFactors() ropeFactor {
 	for i := 0; i < headDim; i += 2 {
 		freq := 1 / math.Pow(base, float64(i)/float64(headDim))
 		wavelen := 2 * math.Pi / freq
-		scale := float64(1)
+		var scale float64
 		switch {
 		case wavelen < highFreqWavelen:
 			scale = 1

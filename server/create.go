@@ -782,7 +782,9 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
 					case "exaone4", "exaone4_5":
 						name := "exaone4"
-						if arch == "exaone4_5" {
+						if arch == "exaone4_5" ||
+							strings.Contains(strings.ToLower(layer.GGML.KV().String("general.name")), "exaone-4.5") ||
+							strings.Contains(strings.ToLower(layer.GGML.KV().String("general.basename")), "exaone-4.5") {
 							name = "exaone4_5"
 						}
 						config.Renderer = cmp.Or(config.Renderer, name)

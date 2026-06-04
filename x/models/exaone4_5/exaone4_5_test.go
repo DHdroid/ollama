@@ -8,11 +8,13 @@ import (
 	"github.com/ollama/ollama/x/models/exaone4"
 )
 
-var _ base.Model = (*Model)(nil)
-var _ base.MTPEmbeddingModel = (*Model)(nil)
-var _ base.DraftModel = (*MTPModel)(nil)
-var _ base.MTPDraftModel = (*MTPModel)(nil)
-var _ base.CachedMTPDraftModel = (*MTPModel)(nil)
+var (
+	_ base.Model               = (*Model)(nil)
+	_ base.MTPEmbeddingModel   = (*Model)(nil)
+	_ base.DraftModel          = (*MTPModel)(nil)
+	_ base.MTPDraftModel       = (*MTPModel)(nil)
+	_ base.CachedMTPDraftModel = (*MTPModel)(nil)
+)
 
 func TestParseTextConfig(t *testing.T) {
 	cfg, err := parseTextConfig([]byte(`{
@@ -120,7 +122,7 @@ func TestNewCachesDelegatesToLanguageModel(t *testing.T) {
 	if len(caches) != 4 {
 		t.Fatalf("len(NewCaches()) = %d, want 4", len(caches))
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if _, ok := caches[i].(*cache.RotatingKVCache); !ok {
 			t.Fatalf("cache[%d] = %T, want *RotatingKVCache", i, caches[i])
 		}

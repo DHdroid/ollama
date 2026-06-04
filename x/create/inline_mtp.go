@@ -16,7 +16,7 @@ var inlineMTPDraftArchitectures = map[string]string{
 func InlineMTPDraftMetadata(modelDir string) (*modeltypes.Draft, error) {
 	cfg, err := readSourceModelConfig(modelDir)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 	arch := cfg.Architecture()
 	draftArch, ok := inlineMTPDraftArchitectures[arch]

@@ -342,7 +342,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
-	for i := int32(0); i < m.NumHiddenLayers; i++ {
+	for i := range m.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{
 			LayerIdx:  i,
