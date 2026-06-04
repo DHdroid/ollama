@@ -13,9 +13,6 @@ func TestDecodeSourceFP8TensorAcceptsWeightScale(t *testing.T) {
 
 	weight := mlx.FromValues([]uint8{0, 1, 2, 3}, 2, 2)
 	scale := mlx.FromValues([]float32{1}, 1, 1).AsType(mlx.DTypeBFloat16)
-	if len(weight.Dims()) != 2 || len(scale.Dims()) != 2 {
-		t.Skipf("MLX runtime unavailable: expected 2D fp8 weight and scale tensors, got %v and %v", weight.Dims(), scale.Dims())
-	}
 	got, err := decodeSourceFP8Tensor(weight, scale)
 	if err != nil {
 		t.Fatal(err)
