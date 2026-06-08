@@ -64,9 +64,9 @@ type speculativeCommitter interface {
 	commit(n int)
 }
 
-// Speculation is an isolated cache transaction for speculative target
-// validation. Updates record generated K/V without mutating the live caches;
-// Commit appends only the accepted prefix to the live caches.
+// Speculation is a cache transaction for speculative target validation.
+// Callers must finish with Commit, which leaves only the accepted prefix
+// visible in the live caches.
 type Speculation struct {
 	layers []speculativeCommitter
 }
@@ -417,8 +417,6 @@ func (c *isolatedKVCache) State() []*mlx.Array {
 		return []*mlx.Array{c.keys, c.values}
 	}
 	return []*mlx.Array{
-		c.keys,
-		c.values,
 		state[0].Concatenate(2, c.keys),
 		state[1].Concatenate(2, c.values),
 	}
@@ -537,12 +535,7 @@ func (c *speculativeRotatingKVCache) State() []*mlx.Array {
 	if oldK == nil || oldV == nil {
 		return []*mlx.Array{c.keys, c.values}
 	}
-	return []*mlx.Array{
-		c.keys,
-		c.values,
-		oldK.Concatenate(2, c.keys),
-		oldV.Concatenate(2, c.values),
-	}
+	return []*mlx.Array{oldK.Concatenate(2, c.keys), oldV.Concatenate(2, c.values)}
 }
 
 func (c *speculativeRotatingKVCache) commit(n int) {

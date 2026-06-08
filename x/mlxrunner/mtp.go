@@ -509,13 +509,14 @@ func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbe
 	}
 
 	draftCallCaches := caches
-	var spec *cache.Speculation
+	isolatedDraftCache := false
 	if len(draftCaches) > 0 {
 		var ok bool
-		draftCallCaches, spec, ok = cache.BeginSpeculation(draftCaches)
+		draftCallCaches, ok = cache.BeginIsolatedSpeculation(draftCaches)
 		if !ok {
 			draftCallCaches = nil
-			spec = nil
+		} else {
+			isolatedDraftCache = true
 		}
 	}
 
@@ -527,7 +528,7 @@ func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbe
 		tokenEmbedding := target.TokenEmbeddings(lastToken)
 		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
 		stepPosition := position
-		if spec != nil {
+		if isolatedDraftCache {
 			stepPosition += int32(step)
 		}
 		logits, projected := draft.Draft(inputs, stepPosition, draftCallCaches)
@@ -541,14 +542,13 @@ func (r *Runner) generateMTPDrafts(draft base.MTPDraftModel, target base.MTPEmbe
 	if len(draftTokens) == 0 {
 		return nil
 	}
-	if spec != nil {
-		tokenEmbedding := target.TokenEmbeddings(lastToken)
-		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
-		draft.Draft(inputs, position+int32(len(draftTokens)), draftCallCaches)
+	var state []*mlx.Array
+	if isolatedDraftCache {
+		state = cacheState(draftCallCaches)
 	}
 	return &mtpDraftBatch{
 		tokens: mlx.Concatenate(draftTokens, 1),
-		state:  cacheState(draftCallCaches),
+		state:  state,
 	}
 }
 
@@ -558,13 +558,14 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 	}
 
 	draftCallCaches := caches
-	var spec *cache.Speculation
+	isolatedDraftCache := false
 	if len(draftCaches) > 0 {
 		var ok bool
-		draftCallCaches, spec, ok = cache.BeginSpeculation(draftCaches)
+		draftCallCaches, ok = cache.BeginIsolatedSpeculation(draftCaches)
 		if !ok {
 			draftCallCaches = nil
-			spec = nil
+		} else {
+			isolatedDraftCache = true
 		}
 	}
 
@@ -578,7 +579,7 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 		tokenEmbedding := target.TokenEmbeddings(lastToken)
 		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
 		stepPosition := position
-		if spec != nil {
+		if isolatedDraftCache {
 			stepPosition += int32(step)
 		}
 		logits, projected := draft.Draft(inputs, stepPosition, draftCallCaches)
@@ -599,15 +600,14 @@ func (r *Runner) generateMTPDraftCandidates(draft base.MTPDraftModel, target bas
 	if len(draftTokens) == 0 {
 		return nil
 	}
-	if spec != nil {
-		tokenEmbedding := target.TokenEmbeddings(lastToken)
-		inputs := tokenEmbedding.Concatenate(-1, lastHidden)
-		draft.Draft(inputs, position+int32(len(draftTokens)), draftCallCaches)
+	var state []*mlx.Array
+	if isolatedDraftCache {
+		state = cacheState(draftCallCaches)
 	}
 	return &mtpDraftCandidates{
 		tokens: mlx.Concatenate(draftTokens, 1),
 		dist:   sampler.ConcatenateDistributions(draftDists),
-		state:  cacheState(draftCallCaches),
+		state:  state,
 	}
 }
 

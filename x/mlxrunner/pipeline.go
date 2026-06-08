@@ -75,21 +75,20 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(r.Model, inputs)
+	var eagleMTPDraft base.EagleMTPDraftModel
+	if r.useGreedyMTP(request.SamplerOpts) || r.useSampleMTP(request.SamplerOpts) {
+		if draft, ok := r.Draft.(base.EagleMTPDraftModel); ok {
+			eagleMTPDraft = draft
+		}
+	}
+
+	session := r.cache.begin(r.Model, inputs, eagleMTPDraft)
 	defer session.close()
 
 	caches := session.caches
 	tokens := session.remaining
+	mtpCaches := session.draftCaches
 	prefillChunk := prefillChunkSize()
-	var eagleMTPDraft base.EagleMTPDraftModel
-	var mtpCaches []cache.Cache
-	if r.useGreedyMTP(request.SamplerOpts) || r.useSampleMTP(request.SamplerOpts) {
-		if draft, ok := r.Draft.(base.EagleMTPDraftModel); ok {
-			eagleMTPDraft = draft
-			mtpCaches = draft.NewCaches()
-			defer freeCacheSet(mtpCaches)
-		}
-	}
 
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
@@ -121,55 +120,6 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			return
 		}
 		mlx.Eval(state...)
-	}
-
-	if eagleMTPDraft != nil {
-		targetCachedPrefix := len(inputs) - len(tokens)
-		mtpCachedPrefix := min(targetCachedPrefix, len(inputs)-1)
-		if targetCachedPrefix > 0 {
-			t0 := time.Now()
-			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
-			rebuildCaches := newModelCaches(r.Model)
-			rebuildProcessed := 0
-			for targetCachedPrefix-rebuildProcessed > 0 {
-				if err := ctx.Err(); err != nil {
-					freeCacheSet(rebuildCaches)
-					return err
-				}
-				n := min(prefillChunk, targetCachedPrefix-rebuildProcessed)
-				start, end := rebuildProcessed, rebuildProcessed+n
-				inputIDs := mlx.FromValues(inputs[start:end], 1, n)
-				hidden := r.Model.Forward(&batch.Batch{
-					InputIDs:     inputIDs,
-					SeqOffsets:   []int32{int32(start)},
-					SeqQueryLens: []int32{int32(n)},
-				}, rebuildCaches)
-				if appendEnd := min(end, mtpCachedPrefix); appendEnd > start {
-					nextInputIDs := mlx.FromValues(inputs[start+1:appendEnd+1], 1, appendEnd-start)
-					appendHidden := hidden
-					if appendEnd < end {
-						appendHidden = hidden.Slice(mlx.Slice(), mlx.Slice(0, appendEnd-start), mlx.Slice())
-					}
-					eagleMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, appendHidden, int32(start), mtpCaches)
-				}
-				mlx.Sweep()
-				materializeCaches(rebuildCaches, mtpCaches)
-				rebuildProcessed = end
-				mlx.ClearCache()
-			}
-			freeCacheSet(rebuildCaches)
-			draftOffset := 0
-			if len(mtpCaches) > 0 && mtpCaches[0] != nil {
-				draftOffset = mtpCaches[0].Offset()
-			}
-			slog.Info("MTP draft cache rebuild",
-				"target_cached", targetCachedPrefix,
-				"rebuilt", targetCachedPrefix,
-				"mtp_rebuilt", mtpCachedPrefix,
-				"draft_offset", draftOffset,
-				"duration", time.Since(t0),
-			)
-		}
 	}
 
 	now := time.Now()
@@ -309,18 +259,6 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	case request.Responses <- final:
 		return nil
 	}
-}
-
-func newModelCaches(m base.Model) []cache.Cache {
-	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
-		return cacheFactory.NewCaches()
-	}
-
-	caches := make([]cache.Cache, m.NumLayers())
-	for i := range caches {
-		caches[i] = cache.NewKVCache()
-	}
-	return caches
 }
 
 func freeCacheSet(caches []cache.Cache) {

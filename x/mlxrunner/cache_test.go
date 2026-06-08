@@ -7,6 +7,7 @@ import (
 
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 // snapshotTracker records every fakeSnapshot created and every Close() call
@@ -305,6 +306,19 @@ type feedableCache interface {
 	feed(tokens []int32)
 }
 
+type fakeEagleDraft struct {
+	caches []cache.Cache
+}
+
+func (d fakeEagleDraft) NewCaches() []cache.Cache { return d.caches }
+
+func (d fakeEagleDraft) Draft(_ *mlx.Array, _ int32, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+	return nil, nil
+}
+
+func (d fakeEagleDraft) AppendContext(_ base.MTPEmbeddingModel, _, _ *mlx.Array, _ int32, _ []cache.Cache) {
+}
+
 // testEnv encapsulates a kvCache and its fake caches for a test scenario.
 type testEnv struct {
 	kvc        *kvCache
@@ -531,10 +545,12 @@ func checkSnapshotLeaks(t *testing.T, tracker *snapshotTracker, root *trieNode) 
 	// Collect all live snapshots still referenced by trie nodes.
 	live := make(map[*fakeSnapshot]bool)
 	walkNodes(root, func(n *trieNode) bool {
-		for _, s := range n.snapshots {
-			if s != nil {
-				if fs, ok := s.(*fakeSnapshot); ok {
-					live[fs] = true
+		for _, snaps := range [][]cache.Snapshot{n.snapshots, n.draftSnapshots} {
+			for _, s := range snaps {
+				if s != nil {
+					if fs, ok := s.(*fakeSnapshot); ok {
+						live[fs] = true
+					}
 				}
 			}
 		}
@@ -639,6 +655,61 @@ func TestBranchCreationAndReuse(t *testing.T) {
 
 		checkTrieInvariants(t, kvc.root)
 	})
+}
+
+func TestEagleDraftCacheRestoresWithTargetPrefix(t *testing.T) {
+	tracker := &snapshotTracker{}
+	targetCache := &fakeRewindableCache{tracker: tracker}
+	draftCache := &fakeRewindableCache{tracker: tracker}
+	kvc := &kvCache{caches: []cache.Cache{targetCache}}
+	draft := fakeEagleDraft{caches: []cache.Cache{draftCache}}
+	t.Cleanup(func() {
+		checkSnapshotLeaks(t, tracker, kvc.root)
+	})
+
+	sessionA := kvc.begin(nil, []int32{1, 2, 3, 4, 5}, draft)
+	feedAll(sessionA.caches, []int32{1, 2, 3, 4, 5})
+	feedAll(sessionA.draftCaches, []int32{1, 2, 3, 4, 5})
+	sessionA.close()
+
+	sessionB := kvc.begin(nil, []int32{1, 2, 3, 9}, draft)
+	if got, want := sessionB.remaining, []int32{9}; !slices.Equal(got, want) {
+		t.Fatalf("remaining = %v, want %v", got, want)
+	}
+	assertTokens(t, "target cache after branch restore", targetCache, []int32{1, 2, 3})
+	assertTokens(t, "draft cache after branch restore", draftCache, []int32{1, 2, 3})
+}
+
+func TestEagleDraftCacheDoesNotAffectNonMTPRequest(t *testing.T) {
+	tracker := &snapshotTracker{}
+	targetCache := &fakeRewindableCache{tracker: tracker}
+	draftCache := &fakeRewindableCache{tracker: tracker}
+	kvc := &kvCache{caches: []cache.Cache{targetCache}}
+	draft := fakeEagleDraft{caches: []cache.Cache{draftCache}}
+	t.Cleanup(func() {
+		checkSnapshotLeaks(t, tracker, kvc.root)
+	})
+
+	sessionA := kvc.begin(nil, []int32{1, 2, 3, 4, 5}, draft)
+	feedAll(sessionA.caches, []int32{1, 2, 3, 4, 5})
+	feedAll(sessionA.draftCaches, []int32{1, 2, 3, 4, 5})
+	sessionA.close()
+
+	sessionB := kvc.begin(nil, []int32{1, 2, 3, 9})
+	if sessionB.draftCaches != nil {
+		t.Fatal("non-MTP request should not keep live draft caches")
+	}
+	if got, want := sessionB.remaining, []int32{9}; !slices.Equal(got, want) {
+		t.Fatalf("non-MTP remaining = %v, want %v", got, want)
+	}
+	feedAll(sessionB.caches, sessionB.remaining)
+	sessionB.close()
+	assertTokens(t, "target cache after non-MTP branch", targetCache, []int32{1, 2, 3, 9})
+
+	sessionC := kvc.begin(nil, []int32{1, 2, 3, 4, 5}, draft)
+	if len(sessionC.remaining) == 0 {
+		t.Fatal("MTP request reused a prefix without live draft cache state")
+	}
 }
 
 // TestExactMatchSeedBehavior verifies the holdback mechanism: when the exact
