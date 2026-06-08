@@ -244,12 +244,12 @@ func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64, dra
 	}
 	if node.hasDraftSnapshots() {
 		oldSnaps := node.swapDraftSnapshots(nil, counter)
-		if len(draftCaches) > 0 {
+		if drafts := liveDraftCaches(draftCaches, len(oldSnaps)); drafts != nil {
 			parentSnaps := make([]cache.Snapshot, len(oldSnaps))
 			childSnaps := make([]cache.Snapshot, len(oldSnaps))
 			for i, snap := range oldSnaps {
 				if snap != nil {
-					parentSnaps[i], childSnaps[i] = draftCaches[0][i].Split(snap, newParent.endOffset)
+					parentSnaps[i], childSnaps[i] = drafts[i].Split(snap, newParent.endOffset)
 				}
 			}
 			newParent.setDraftSnapshots(parentSnaps, counter)
@@ -309,18 +309,19 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64, draftC
 	if len(node.draftSnapshots) > 0 || len(child.draftSnapshots) > 0 {
 		nodeSnaps := node.swapDraftSnapshots(nil, counter)
 		childSnaps := child.swapDraftSnapshots(nil, counter)
-		if len(draftCaches) > 0 {
-			merged := make([]cache.Snapshot, len(draftCaches[0]))
-			for i := range draftCaches[0] {
+		needed := max(len(nodeSnaps), len(childSnaps))
+		if drafts := liveDraftCaches(draftCaches, needed); drafts != nil {
+			merged := make([]cache.Snapshot, len(drafts))
+			for i := range drafts {
 				var ps, cs cache.Snapshot
-				if nodeSnaps != nil {
+				if i < len(nodeSnaps) {
 					ps = nodeSnaps[i]
 				}
-				if childSnaps != nil {
+				if i < len(childSnaps) {
 					cs = childSnaps[i]
 				}
 
-				merged[i] = draftCaches[0][i].Merge(ps, cs)
+				merged[i] = drafts[i].Merge(ps, cs)
 			}
 			node.setDraftSnapshots(merged, counter)
 		} else {
@@ -345,6 +346,13 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64, draftC
 
 	child.parent = nil
 	child.children = nil
+}
+
+func liveDraftCaches(draftCaches [][]cache.Cache, minLayers int) []cache.Cache {
+	if len(draftCaches) == 0 || len(draftCaches[0]) < minLayers {
+		return nil
+	}
+	return draftCaches[0]
 }
 
 // walkNodes calls fn for every node in the trie (depth-first).

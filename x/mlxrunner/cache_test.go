@@ -712,6 +712,61 @@ func TestEagleDraftCacheDoesNotAffectNonMTPRequest(t *testing.T) {
 	}
 }
 
+func TestSplitNodeDropsDraftSnapshotsWithoutLiveDraftCaches(t *testing.T) {
+	snap := &fakeSnapshot{}
+	root := &trieNode{}
+	node := &trieNode{
+		tokens:         []int32{1, 2, 3, 4, 5},
+		endOffset:      5,
+		parent:         root,
+		draftSnapshots: []cache.Snapshot{snap},
+	}
+	root.children = []*trieNode{node}
+
+	var counter int64
+	parent := splitNode(node, 3, []cache.Cache{&fakeRewindableCache{}}, &counter, []cache.Cache(nil))
+
+	if parent.hasDraftSnapshots() {
+		t.Fatal("split parent retained draft snapshots without live draft caches")
+	}
+	if node.hasDraftSnapshots() {
+		t.Fatal("split child retained draft snapshots without live draft caches")
+	}
+	if snap.closeCount != 1 {
+		t.Fatalf("stale draft snapshot closeCount = %d, want 1", snap.closeCount)
+	}
+}
+
+func TestMergeNodeDropsDraftSnapshotsWithoutLiveDraftCaches(t *testing.T) {
+	parentSnap := &fakeSnapshot{}
+	childSnap := &fakeSnapshot{}
+	child := &trieNode{
+		tokens:         []int32{4, 5},
+		endOffset:      5,
+		draftSnapshots: []cache.Snapshot{childSnap},
+	}
+	node := &trieNode{
+		tokens:         []int32{1, 2, 3},
+		endOffset:      3,
+		children:       []*trieNode{child},
+		draftSnapshots: []cache.Snapshot{parentSnap},
+	}
+	child.parent = node
+
+	var counter int64
+	mergeWithChild(node, []cache.Cache{&fakeRewindableCache{}}, &counter, []cache.Cache(nil))
+
+	if node.hasDraftSnapshots() {
+		t.Fatal("merged node retained draft snapshots without live draft caches")
+	}
+	if parentSnap.closeCount != 1 {
+		t.Fatalf("stale parent draft snapshot closeCount = %d, want 1", parentSnap.closeCount)
+	}
+	if childSnap.closeCount != 1 {
+		t.Fatalf("stale child draft snapshot closeCount = %d, want 1", childSnap.closeCount)
+	}
+}
+
 // TestExactMatchSeedBehavior verifies the holdback mechanism: when the exact
 // same prompt is requested twice, the cache does not overclaim cached work.
 // The last token must be re-evaluated to seed generation.
