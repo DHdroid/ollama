@@ -507,6 +507,7 @@ func (r *Runner) runGreedyEagleMTPDecode(ctx context.Context, request Request, s
 	baseLogits := r.lastLogits(hidden)
 	stats.targetDuration += time.Since(t0)
 	pending := sampler.Result{Token: greedyTokenFromLogits(baseLogits)}
+	mlx.Eval(pending.Arrays()...)
 	draftLogits, draftHidden := draft.AppendContextWithLogits(targetEmbeddings, mtpSeedNextInput(seed, pending.Token), hidden, seedPosition, draftCaches)
 	draftLogits = r.lastMTPLogits(draftLogits)
 	draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -533,6 +534,7 @@ func (r *Runner) runGreedyEagleMTPDecode(ctx context.Context, request Request, s
 			}
 			nextLogits := r.lastLogits(nextHidden)
 			pending = sampler.Result{Token: greedyTokenFromLogits(nextLogits)}
+			mlx.Eval(pending.Arrays()...)
 			draftLogits, draftHidden = draft.AppendContextWithLogits(targetEmbeddings, mtpTokenInput(pending.Token), nextHidden, int32(*position-1), draftCaches)
 			draftLogits = r.lastMTPLogits(draftLogits)
 			draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -606,6 +608,7 @@ func (r *Runner) runSampleEagleMTPDecode(ctx context.Context, request Request, s
 	baseLogits := r.lastLogits(hidden)
 	stats.targetDuration += time.Since(t0)
 	pending := r.Sampler.Sample([]int{pipelineSlot}, baseLogits)
+	mlx.Eval(pending.Arrays()...)
 	draftLogits, draftHidden := draft.AppendContextWithLogits(targetEmbeddings, mtpSeedNextInput(seed, pending.Token), hidden, seedPosition, draftCaches)
 	draftLogits = r.lastMTPLogits(draftLogits)
 	draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -632,6 +635,7 @@ func (r *Runner) runSampleEagleMTPDecode(ctx context.Context, request Request, s
 			}
 			nextLogits := r.lastLogits(nextHidden)
 			pending = r.Sampler.Sample([]int{pipelineSlot}, nextLogits)
+			mlx.Eval(pending.Arrays()...)
 			draftLogits, draftHidden = draft.AppendContextWithLogits(targetEmbeddings, mtpTokenInput(pending.Token), nextHidden, int32(*position-1), draftCaches)
 			draftLogits = r.lastMTPLogits(draftLogits)
 			draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -956,7 +960,7 @@ func (r *Runner) acceptGreedyEagleMTPDrafts(ctx context.Context, request Request
 	draftIDs := draftTokens.Ints()
 	selectedIDs := selectedTokens.Ints()
 	if len(selectedIDs) < draftCount+1 {
-		return sampler.Result{}, nil, nil, 0, false, fmt.Errorf("Eagle MTP validation produced %d tokens for %d draft tokens", len(selectedIDs), draftCount)
+		return sampler.Result{}, nil, nil, 0, false, fmt.Errorf("Eagle MTP validation produced %d tokens for %d draft tokens (pending=%v draft=%v validation=%v hidden=%v selected=%v)", len(selectedIDs), draftCount, pending.Token.Dims(), draftTokens.Dims(), validationTokens.Dims(), hiddenSeq.Dims(), selectedTokens.Dims())
 	}
 
 	accepted := 0
@@ -1385,7 +1389,7 @@ func mtpShiftedNextInput(committedIDs []int32, nextID int32) *mlx.Array {
 func mtpTokenInput(token *mlx.Array) *mlx.Array {
 	switch token.NumDims() {
 	case 0:
-		return token.Reshape(1, 1)
+		return mlx.FromValues([]int32{int32(tokenID(token))}, 1, 1)
 	case 1:
 		return token.ExpandDims(-1)
 	case 2:
