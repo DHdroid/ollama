@@ -508,6 +508,10 @@ func (r *Runner) runGreedyEagleMTPDecode(ctx context.Context, request Request, s
 	stats.targetDuration += time.Since(t0)
 	pending := sampler.Result{Token: greedyTokenFromLogits(baseLogits)}
 	mlx.Eval(pending.Arrays()...)
+	mlx.Pin(pending.Arrays()...)
+	defer func() {
+		mlx.Unpin(pending.Arrays()...)
+	}()
 	draftLogits, draftHidden := draft.AppendContextWithLogits(targetEmbeddings, mtpSeedNextInput(seed, pending.Token), hidden, seedPosition, draftCaches)
 	draftLogits = r.lastMTPLogits(draftLogits)
 	draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -533,8 +537,11 @@ func (r *Runner) runGreedyEagleMTPDecode(ctx context.Context, request Request, s
 				break
 			}
 			nextLogits := r.lastLogits(nextHidden)
+			old := pending
 			pending = sampler.Result{Token: greedyTokenFromLogits(nextLogits)}
 			mlx.Eval(pending.Arrays()...)
+			mlx.Pin(pending.Arrays()...)
+			mlx.Unpin(old.Arrays()...)
 			draftLogits, draftHidden = draft.AppendContextWithLogits(targetEmbeddings, mtpTokenInput(pending.Token), nextHidden, int32(*position-1), draftCaches)
 			draftLogits = r.lastMTPLogits(draftLogits)
 			draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -574,7 +581,11 @@ func (r *Runner) runGreedyEagleMTPDecode(ctx context.Context, request Request, s
 			break
 		}
 
+		old := pending
 		pending = next
+		mlx.Eval(pending.Arrays()...)
+		mlx.Pin(pending.Arrays()...)
+		mlx.Unpin(old.Arrays()...)
 		draftLogits = nextDraftLogits
 		draftHidden = nextDraftHidden
 
@@ -609,6 +620,10 @@ func (r *Runner) runSampleEagleMTPDecode(ctx context.Context, request Request, s
 	stats.targetDuration += time.Since(t0)
 	pending := r.Sampler.Sample([]int{pipelineSlot}, baseLogits)
 	mlx.Eval(pending.Arrays()...)
+	mlx.Pin(pending.Arrays()...)
+	defer func() {
+		mlx.Unpin(pending.Arrays()...)
+	}()
 	draftLogits, draftHidden := draft.AppendContextWithLogits(targetEmbeddings, mtpSeedNextInput(seed, pending.Token), hidden, seedPosition, draftCaches)
 	draftLogits = r.lastMTPLogits(draftLogits)
 	draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -634,8 +649,11 @@ func (r *Runner) runSampleEagleMTPDecode(ctx context.Context, request Request, s
 				break
 			}
 			nextLogits := r.lastLogits(nextHidden)
+			old := pending
 			pending = r.Sampler.Sample([]int{pipelineSlot}, nextLogits)
 			mlx.Eval(pending.Arrays()...)
+			mlx.Pin(pending.Arrays()...)
+			mlx.Unpin(old.Arrays()...)
 			draftLogits, draftHidden = draft.AppendContextWithLogits(targetEmbeddings, mtpTokenInput(pending.Token), nextHidden, int32(*position-1), draftCaches)
 			draftLogits = r.lastMTPLogits(draftLogits)
 			draftHidden = lastMTPSequenceHidden(draftHidden)
@@ -674,7 +692,11 @@ func (r *Runner) runSampleEagleMTPDecode(ctx context.Context, request Request, s
 			break
 		}
 
+		old := pending
 		pending = next
+		mlx.Eval(pending.Arrays()...)
+		mlx.Pin(pending.Arrays()...)
+		mlx.Unpin(old.Arrays()...)
 		draftLogits = nextDraftLogits
 		draftHidden = nextDraftHidden
 
