@@ -153,12 +153,21 @@ func (m *MTPModel) NewCaches() []cache.Cache {
 }
 
 func (m *MTPModel) AppendContext(target base.MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) {
+	m.appendContext(target, nextInputIDs, hidden, position, caches)
+}
+
+func (m *MTPModel) AppendContextWithLogits(target base.MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) (logits, draftHidden *mlx.Array) {
+	draftHidden = m.appendContext(target, nextInputIDs, hidden, position, caches)
+	return m.target.Unembed(draftHidden), draftHidden
+}
+
+func (m *MTPModel) appendContext(target base.MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) *mlx.Array {
 	if nextDims, hiddenDims := nextInputIDs.Dims(), hidden.Dims(); len(nextDims) == 2 && len(hiddenDims) == 3 && nextDims[1] > hiddenDims[1] {
 		nextInputIDs = nextInputIDs.Slice(mlx.Slice(), mlx.Slice(0, hiddenDims[1]))
 	}
 	tokenEmbedding := target.TokenEmbeddings(nextInputIDs)
 	inputs := tokenEmbedding.Concatenate(-1, hidden)
-	m.forward(inputs, position, caches)
+	return m.forward(inputs, position, caches)
 }
 
 func (m *MTPModel) Draft(inputs *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array) {

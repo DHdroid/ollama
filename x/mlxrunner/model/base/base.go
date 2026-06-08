@@ -62,6 +62,14 @@ type EagleMTPDraftModel interface {
 	AppendContext(target MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache)
 }
 
+// EagleMTPDraftLogitsModel is an EAGLE-style MTP draft model that can return
+// the logits from an appended context. Hot decode paths use it to avoid a
+// duplicate draft forward after appending validated target hidden states.
+type EagleMTPDraftLogitsModel interface {
+	EagleMTPDraftModel
+	AppendContextWithLogits(target MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) (logits, draftHidden *mlx.Array)
+}
+
 // MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.
 type MTPEmbeddingModel interface {
 	TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array
