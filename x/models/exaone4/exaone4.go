@@ -431,7 +431,7 @@ func (m *Model) NewCaches() []cache.Cache {
 	caches := make([]cache.Cache, len(m.Layers))
 	for i, layer := range m.Layers {
 		if m.SlidingWindow > 0 && layer.IsSliding {
-			caches[i] = cache.NewRotatingKVCache(max(1, int(m.SlidingWindow)-1))
+			caches[i] = cache.NewRotatingKVCache(max(1, int(m.SlidingWindow)))
 		} else {
 			caches[i] = cache.NewKVCache()
 		}
