@@ -46,10 +46,28 @@ type MTPDefaultsProvider interface {
 	MTPDraftDefaults(sample bool) MTPDefaults
 }
 
-// MTPDraftModel is a draft model capable of Gemma-style multi-token
-// prediction from target token embeddings, target hidden states, and target KV.
+// MTPDraftModel is a draft model capable of multi-token prediction from target
+// token embeddings and target hidden states.
 type MTPDraftModel interface {
 	Draft(inputEmbeds *mlx.Array, position int32, caches []cache.Cache) (logits, hidden *mlx.Array)
+}
+
+// EagleMTPDraftModel is an EAGLE-style MTP draft model with its own attention
+// KV cache. It refills draft context from target-model hidden states.
+type EagleMTPDraftModel interface {
+	MTPDraftModel
+	NewCaches() []cache.Cache
+	// AppendContext appends target hidden states at their original positions,
+	// paired with the shifted next-token ids used by EAGLE-style MTP prefill.
+	AppendContext(target MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache)
+}
+
+// EagleMTPDraftLogitsModel is an EAGLE-style MTP draft model that can return
+// the logits from an appended context. Hot decode paths use it to avoid a
+// duplicate draft forward after appending validated target hidden states.
+type EagleMTPDraftLogitsModel interface {
+	EagleMTPDraftModel
+	AppendContextWithLogits(target MTPEmbeddingModel, nextInputIDs, hidden *mlx.Array, position int32, caches []cache.Cache) (logits, draftHidden *mlx.Array)
 }
 
 // MTPEmbeddingModel exposes the target token embedding path used by MTP drafts.

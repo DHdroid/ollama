@@ -780,6 +780,22 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 					case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
 						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
+					case "exaone4", "exaone4_5":
+						name := "exaone4"
+						if arch == "exaone4_5" ||
+							strings.Contains(strings.ToLower(layer.GGML.KV().String("general.name")), "exaone-4.5") ||
+							strings.Contains(strings.ToLower(layer.GGML.KV().String("general.basename")), "exaone-4.5") {
+							name = "exaone4_5"
+						}
+						config.Renderer = cmp.Or(config.Renderer, name)
+						config.Parser = cmp.Or(config.Parser, name)
+						if len(config.Capabilities) == 0 {
+							config.Capabilities = []string{
+								model.CapabilityCompletion.String(),
+								model.CapabilityTools.String(),
+								model.CapabilityThinking.String(),
+							}
+						}
 					}
 				}
 			case manifest.MediaTypeImageDraft:

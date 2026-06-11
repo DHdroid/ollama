@@ -64,9 +64,9 @@ type speculativeCommitter interface {
 	commit(n int)
 }
 
-// Speculation is an isolated cache transaction for speculative target
-// validation. Updates record generated K/V without mutating the live caches;
-// Commit appends only the accepted prefix to the live caches.
+// Speculation is a cache transaction for speculative target validation.
+// Callers must finish with Commit, which leaves only the accepted prefix
+// visible in the live caches.
 type Speculation struct {
 	layers []speculativeCommitter
 }

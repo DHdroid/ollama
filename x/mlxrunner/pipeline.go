@@ -12,7 +12,9 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/tokenizer"
 )
@@ -73,11 +75,19 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 
 	inputs := request.Tokens
 
-	session := r.cache.begin(r.Model, inputs)
+	var eagleMTPDraft base.EagleMTPDraftModel
+	if r.useGreedyMTP(request.SamplerOpts) || r.useSampleMTP(request.SamplerOpts) {
+		if draft, ok := r.Draft.(base.EagleMTPDraftModel); ok {
+			eagleMTPDraft = draft
+		}
+	}
+
+	session := r.cache.begin(r.Model, inputs, eagleMTPDraft)
 	defer session.close()
 
 	caches := session.caches
 	tokens := session.remaining
+	mtpCaches := session.draftCaches
 	prefillChunk := prefillChunkSize()
 
 	// Request periodic snapshots during prefill and near the end of the
@@ -93,10 +103,18 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		session.requestSnapshot(end)
 	}
 
-	materializeCaches := func() {
+	materializeCaches := func(cacheSets ...[]cache.Cache) {
+		if len(cacheSets) == 0 {
+			cacheSets = [][]cache.Cache{caches}
+		}
 		state := make([]*mlx.Array, 0, 2*len(caches))
-		for _, c := range caches {
-			state = append(state, c.State()...)
+		for _, set := range cacheSets {
+			for _, c := range set {
+				if c == nil {
+					continue
+				}
+				state = append(state, c.State()...)
+			}
 		}
 		if len(state) == 0 {
 			return
@@ -123,13 +141,25 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 			}
 		}
 
-		r.Model.Forward(&batch.Batch{
+		b := &batch.Batch{
 			InputIDs:     mlx.FromValues(tokens[processed:processed+n], 1, n),
 			SeqOffsets:   []int32{int32(position)},
 			SeqQueryLens: []int32{int32(n)},
-		}, caches)
+		}
+		if eagleMTPDraft != nil {
+			targetEmbeddings := r.Model.(base.MTPEmbeddingModel)
+			targetHidden := r.Model.Forward(b, caches)
+			nextInputIDs := mlx.FromValues(tokens[processed+1:processed+n+1], 1, n)
+			eagleMTPDraft.AppendContext(targetEmbeddings, nextInputIDs, targetHidden, int32(position), mtpCaches)
+		} else {
+			r.Model.Forward(b, caches)
+		}
 		mlx.Sweep()
-		materializeCaches()
+		if eagleMTPDraft != nil {
+			materializeCaches(caches, mtpCaches)
+		} else {
+			materializeCaches()
+		}
 		processed += n
 		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
@@ -148,10 +178,10 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 	if r.useGreedyMTP(request.SamplerOpts) {
-		return r.runGreedyMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+		return r.runGreedyMTPDecode(ctx, request, session, caches, mtpCaches, tokens[processed:], &position, now)
 	}
 	if r.useSampleMTP(request.SamplerOpts) {
-		return r.runSampleMTPDecode(ctx, request, session, caches, tokens[processed:], &position, now)
+		return r.runSampleMTPDecode(ctx, request, session, caches, mtpCaches, tokens[processed:], &position, now)
 	}
 
 	step := func(token *mlx.Array) sampler.Result {
@@ -228,6 +258,14 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		return ctx.Err()
 	case request.Responses <- final:
 		return nil
+	}
+}
+
+func freeCacheSet(caches []cache.Cache) {
+	for _, c := range caches {
+		if c != nil {
+			c.Free()
+		}
 	}
 }
 

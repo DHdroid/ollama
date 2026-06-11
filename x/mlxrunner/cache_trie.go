@@ -12,13 +12,14 @@ import (
 // Each node stores a compressed edge (multiple tokens) and optional paged-out
 // snapshot data per cache layer.
 type trieNode struct {
-	tokens    []int32 // compressed edge — multiple tokens per node
-	endOffset int     // cumulative tokens from root to end of this node
-	parent    *trieNode
-	children  []*trieNode
-	lastUsed  time.Time        // for LRU eviction
-	snapshots []cache.Snapshot // per-layer paged-out snapshot data (nil if not paged out)
-	user      bool             // true = explicit restore point (resist auto-merge)
+	tokens         []int32 // compressed edge — multiple tokens per node
+	endOffset      int     // cumulative tokens from root to end of this node
+	parent         *trieNode
+	children       []*trieNode
+	lastUsed       time.Time        // for LRU eviction
+	snapshots      []cache.Snapshot // per-layer paged-out snapshot data (nil if not paged out)
+	draftSnapshots []cache.Snapshot // per-layer EAGLE draft snapshot data
+	user           bool             // true = explicit restore point (resist auto-merge)
 }
 
 // startOffset returns the cumulative token offset at the start of this node's edge.
@@ -28,8 +29,12 @@ func (n *trieNode) startOffset() int {
 
 // snapshotBytes returns the total bytes of paged-out snapshots on this node.
 func (n *trieNode) snapshotBytes() int64 {
+	return snapshotBytes(n.snapshots) + snapshotBytes(n.draftSnapshots)
+}
+
+func snapshotBytes(snaps []cache.Snapshot) int64 {
 	var total int64
-	for _, s := range n.snapshots {
+	for _, s := range snaps {
 		if s != nil {
 			total += int64(s.Size())
 		}
@@ -41,11 +46,12 @@ func (n *trieNode) snapshotBytes() int64 {
 // If counter is non-nil, the net byte delta is applied to it.
 func (n *trieNode) setSnapshots(snaps []cache.Snapshot, counter *int64) {
 	old := n.swapSnapshots(snaps, counter)
-	for _, s := range old {
-		if s != nil {
-			s.Close()
-		}
-	}
+	closeSnapshots(old)
+}
+
+func (n *trieNode) setDraftSnapshots(snaps []cache.Snapshot, counter *int64) {
+	old := n.swapDraftSnapshots(snaps, counter)
+	closeSnapshots(old)
 }
 
 // swapSnapshots is like setSnapshots but returns the previous snapshots
@@ -54,13 +60,33 @@ func (n *trieNode) setSnapshots(snaps []cache.Snapshot, counter *int64) {
 func (n *trieNode) swapSnapshots(snaps []cache.Snapshot, counter *int64) []cache.Snapshot {
 	old := n.snapshots
 	if counter != nil {
-		*counter -= n.snapshotBytes()
+		*counter -= snapshotBytes(n.snapshots)
 	}
 	n.snapshots = snaps
 	if counter != nil {
-		*counter += n.snapshotBytes()
+		*counter += snapshotBytes(n.snapshots)
 	}
 	return old
+}
+
+func (n *trieNode) swapDraftSnapshots(snaps []cache.Snapshot, counter *int64) []cache.Snapshot {
+	old := n.draftSnapshots
+	if counter != nil {
+		*counter -= snapshotBytes(n.draftSnapshots)
+	}
+	n.draftSnapshots = snaps
+	if counter != nil {
+		*counter += snapshotBytes(n.draftSnapshots)
+	}
+	return old
+}
+
+func closeSnapshots(snaps []cache.Snapshot) {
+	for _, s := range snaps {
+		if s != nil {
+			s.Close()
+		}
+	}
 }
 
 // hasSnapshots returns true if any layer has snapshot data.
@@ -68,9 +94,17 @@ func (n *trieNode) hasSnapshots() bool {
 	return slices.ContainsFunc(n.snapshots, func(s cache.Snapshot) bool { return s != nil })
 }
 
+func (n *trieNode) hasDraftSnapshots() bool {
+	return slices.ContainsFunc(n.draftSnapshots, func(s cache.Snapshot) bool { return s != nil })
+}
+
 // hasAllSnapshots returns true if every layer has snapshot data.
 func (n *trieNode) hasAllSnapshots() bool {
 	return len(n.snapshots) > 0 && !slices.Contains(n.snapshots, nil)
+}
+
+func (n *trieNode) hasAllDraftSnapshots() bool {
+	return len(n.draftSnapshots) > 0 && !slices.Contains(n.draftSnapshots, nil)
 }
 
 // findBestMatch walks the trie matching input tokens, returning the path of
@@ -133,7 +167,7 @@ func findBestMatch(root *trieNode, tokens []int32) (path []*trieNode, matched in
 // appendTokens either creates a new child node or extends the leaf in place,
 // returning the node that now holds the tokens.
 func (n *trieNode) appendTokens(root *trieNode, tokens []int32, endOffset int) *trieNode {
-	if n == root || len(n.children) > 0 || n.hasSnapshots() {
+	if n == root || len(n.children) > 0 || n.hasSnapshots() || n.hasDraftSnapshots() {
 		child := &trieNode{
 			tokens:    make([]int32, len(tokens)),
 			endOffset: endOffset,
@@ -166,6 +200,7 @@ func removeNode(node *trieNode, counter *int64) {
 	}
 	node.parent = nil
 	node.setSnapshots(nil, counter)
+	node.setDraftSnapshots(nil, counter)
 }
 
 // splitNode splits a node at the given token offset within its edge,
@@ -173,7 +208,7 @@ func removeNode(node *trieNode, counter *int64) {
 // `at` is relative to the node's edge (0-based index into node.tokens).
 // If caches are provided, snapshots are split between parent and child
 // using Cache.Split; otherwise snapshots are invalidated.
-func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64) *trieNode {
+func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64, draftCaches ...[]cache.Cache) *trieNode {
 	if at <= 0 || at >= len(node.tokens) {
 		panic(fmt.Sprintf("splitNode: invalid split offset %d for node with %d tokens", at, len(node.tokens)))
 	}
@@ -207,6 +242,22 @@ func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64) *tr
 		newParent.setSnapshots(parentSnaps, counter)
 		node.setSnapshots(childSnaps, counter)
 	}
+	if node.hasDraftSnapshots() {
+		oldSnaps := node.swapDraftSnapshots(nil, counter)
+		if drafts := liveDraftCaches(draftCaches, len(oldSnaps)); drafts != nil {
+			parentSnaps := make([]cache.Snapshot, len(oldSnaps))
+			childSnaps := make([]cache.Snapshot, len(oldSnaps))
+			for i, snap := range oldSnaps {
+				if snap != nil {
+					parentSnaps[i], childSnaps[i] = drafts[i].Split(snap, newParent.endOffset)
+				}
+			}
+			newParent.setDraftSnapshots(parentSnaps, counter)
+			node.setDraftSnapshots(childSnaps, counter)
+		} else {
+			closeSnapshots(oldSnaps)
+		}
+	}
 
 	// Reparent: replace node with newParent in the old parent's children.
 	if node.parent != nil {
@@ -224,7 +275,7 @@ func splitNode(node *trieNode, at int, caches []cache.Cache, counter *int64) *tr
 
 // mergeWithChild merges a node with its single child: concatenates tokens,
 // merges snapshot data via Cache.Merge, and removes the child.
-func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64) {
+func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64, draftCaches ...[]cache.Cache) {
 	if len(node.children) != 1 {
 		panic(fmt.Sprintf("mergeWithChild called on node with %d children", len(node.children)))
 	}
@@ -255,6 +306,29 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64) {
 		}
 		node.setSnapshots(merged, counter)
 	}
+	if len(node.draftSnapshots) > 0 || len(child.draftSnapshots) > 0 {
+		nodeSnaps := node.swapDraftSnapshots(nil, counter)
+		childSnaps := child.swapDraftSnapshots(nil, counter)
+		needed := max(len(nodeSnaps), len(childSnaps))
+		if drafts := liveDraftCaches(draftCaches, needed); drafts != nil {
+			merged := make([]cache.Snapshot, len(drafts))
+			for i := range drafts {
+				var ps, cs cache.Snapshot
+				if i < len(nodeSnaps) {
+					ps = nodeSnaps[i]
+				}
+				if i < len(childSnaps) {
+					cs = childSnaps[i]
+				}
+
+				merged[i] = drafts[i].Merge(ps, cs)
+			}
+			node.setDraftSnapshots(merged, counter)
+		} else {
+			closeSnapshots(nodeSnaps)
+			closeSnapshots(childSnaps)
+		}
+	}
 
 	// Adopt grandchildren.
 	node.children = child.children
@@ -272,6 +346,13 @@ func mergeWithChild(node *trieNode, caches []cache.Cache, counter *int64) {
 
 	child.parent = nil
 	child.children = nil
+}
+
+func liveDraftCaches(draftCaches [][]cache.Cache, minLayers int) []cache.Cache {
+	if len(draftCaches) == 0 || len(draftCaches[0]) < minLayers {
+		return nil
+	}
+	return draftCaches[0]
 }
 
 // walkNodes calls fn for every node in the trie (depth-first).

@@ -35,6 +35,7 @@ type kvCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
+	draftCaches   []cache.Cache
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 }
 
@@ -52,8 +53,9 @@ type cacheSession struct {
 	inputs  []int32
 	outputs []int32
 
-	caches    []cache.Cache
-	remaining []int32
+	caches      []cache.Cache
+	draftCaches []cache.Cache
+	remaining   []int32
 
 	// pendingSnapshots lists offsets where snapshots should be captured
 	// during prefill, sorted by offset. Entries are consumed as the
@@ -84,10 +86,32 @@ func (c *kvCache) ensureRoot() {
 	}
 }
 
+func (c *kvCache) ensureDraftCaches(draft base.EagleMTPDraftModel) {
+	if draft == nil || len(c.draftCaches) != 0 {
+		return
+	}
+	c.draftCaches = draft.NewCaches()
+}
+
+func (c *kvCache) clearDraftCaches() {
+	freeCacheSet(c.draftCaches)
+	c.draftCaches = nil
+}
+
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
-func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
+func (c *kvCache) begin(m base.Model, inputs []int32, drafts ...base.EagleMTPDraftModel) *cacheSession {
+	var draft base.EagleMTPDraftModel
+	if len(drafts) > 0 {
+		draft = drafts[0]
+	}
+
 	c.ensureCaches(m)
+	if draft == nil {
+		c.clearDraftCaches()
+	} else {
+		c.ensureDraftCaches(draft)
+	}
 	c.ensureRoot()
 
 	matchPath, matched := findBestMatch(c.root, inputs)
@@ -100,17 +124,35 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	}
 
 	// Switch to the matched path, paging in/out as needed.
-	c.switchToPath(matchPath, matched)
+	draftMatched := matched
+	if draft != nil {
+		draftMatched = min(matched, len(inputs)-1)
+	}
+	c.switchToPath(matchPath, matched, draftMatched)
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
+	if draft != nil {
+		prefix = min(prefix, minCacheOffset(c.draftCaches), len(inputs)-1)
+		for _, kv := range c.caches {
+			if kv != nil && kv.Offset() != prefix {
+				if !kv.Restore(nil, prefix) {
+					slog.Warn("failed to align target cache to draft prefix, freeing all caches", "offset", prefix)
+					c.freeAll()
+					prefix = 0
+					break
+				}
+			}
+		}
+	}
 	remaining := inputs[prefix:]
 
 	session := &cacheSession{
-		cache:     c,
-		inputs:    inputs,
-		caches:    c.caches,
-		remaining: remaining,
+		cache:       c,
+		inputs:      inputs,
+		caches:      c.caches,
+		draftCaches: c.draftCaches,
+		remaining:   remaining,
 	}
 
 	// Schedule a snapshot at the branch point during prefill so future
@@ -130,7 +172,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 
 // switchToPath transitions from the current active path to a new path,
 // paging out diverging segments and paging in the new path.
-func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
+func (c *kvCache) switchToPath(newPath []*trieNode, matched, draftMatched int) {
 	defer c.enforceEvictionPolicy()
 
 	// Find common ancestor index.
@@ -173,6 +215,17 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 			pageOutCount++
 			logutil.Trace(fmt.Sprintf("page out: [%d, %d)", fromOffset, node.endOffset))
 		}
+		if len(c.draftCaches) > 0 && !node.hasAllDraftSnapshots() {
+			fromOffset := node.startOffset()
+			snaps := make([]cache.Snapshot, len(c.draftCaches))
+			for j, kv := range c.draftCaches {
+				if kv == nil {
+					continue
+				}
+				snaps[j] = kv.Snapshot(fromOffset)
+			}
+			node.setDraftSnapshots(snaps, &c.pagedOutBytes)
+		}
 	}
 
 	// Rewind each cache to the target offset or free it. When matched
@@ -185,6 +238,15 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 			continue
 		}
 		if !kv.Restore(nil, rewindTarget) {
+			kv.Free()
+		}
+	}
+	draftRewindTarget := min(ancestorOffset, draftMatched)
+	for _, kv := range c.draftCaches {
+		if kv == nil {
+			continue
+		}
+		if !kv.Restore(nil, draftRewindTarget) {
 			kv.Free()
 		}
 	}
@@ -214,6 +276,23 @@ pageIn:
 				break pageIn
 			}
 		}
+		if len(c.draftCaches) > 0 {
+			draftNodeTarget := min(node.endOffset, draftMatched)
+			for j, kv := range c.draftCaches {
+				if kv == nil {
+					continue
+				}
+				if j >= len(node.draftSnapshots) || node.draftSnapshots[j] == nil {
+					continue
+				}
+				if kv.Offset() >= draftNodeTarget {
+					continue
+				}
+				if !kv.Restore(node.draftSnapshots[j], draftNodeTarget) {
+					break pageIn
+				}
+			}
+		}
 		if node.endOffset > ancestorOffset {
 			pageInCount++
 			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
@@ -229,6 +308,18 @@ pageIn:
 				slog.Warn("failed to restore cache, freeing all caches", "offset", minOff)
 				c.freeAll()
 				break
+			}
+		}
+	}
+	if len(c.draftCaches) > 0 {
+		minDraftOff := minCacheOffset(c.draftCaches)
+		for _, kv := range c.draftCaches {
+			if kv != nil && kv.Offset() != minDraftOff {
+				if !kv.Restore(nil, minDraftOff) {
+					slog.Warn("failed to restore draft cache, freeing draft caches", "offset", minDraftOff)
+					freeCacheSet(c.draftCaches)
+					break
+				}
 			}
 		}
 	}
@@ -352,7 +443,7 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 		lastNode := matchPath[len(matchPath)-1]
 		matchedInEdge := frontier.endOffset + matched - lastNode.startOffset()
 		if matchedInEdge > 0 && matchedInEdge < len(lastNode.tokens) {
-			matchPath[len(matchPath)-1] = splitNode(lastNode, matchedInEdge, c.caches, &c.pagedOutBytes)
+			matchPath[len(matchPath)-1] = splitNode(lastNode, matchedInEdge, c.caches, &c.pagedOutBytes, c.draftCaches)
 		}
 	}
 
@@ -365,6 +456,7 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 		// rather than creating a new child node.
 		if len(dest.children) == 0 && !dest.user {
 			dest.setSnapshots(nil, &c.pagedOutBytes)
+			dest.setDraftSnapshots(nil, &c.pagedOutBytes)
 		}
 		newDest := dest.appendTokens(c.root, remaining, endOffset)
 		if newDest != dest {
@@ -397,6 +489,18 @@ func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
 		}
 	}
 	node.setSnapshots(snaps, &c.pagedOutBytes)
+	if len(c.draftCaches) > 0 {
+		draftSnaps := make([]cache.Snapshot, len(c.draftCaches))
+		for i, kv := range c.draftCaches {
+			if kv != nil {
+				if kv.Offset() != cacheOffset {
+					panic(fmt.Sprintf("attachSnapshots: draft cache offset mismatch layer %d: expected %d, got %d", i, cacheOffset, kv.Offset()))
+				}
+				draftSnaps[i] = kv.Snapshot(node.startOffset())
+			}
+		}
+		node.setDraftSnapshots(draftSnaps, &c.pagedOutBytes)
+	}
 	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", cacheOffset)
 	c.enforceEvictionPolicy()
@@ -409,12 +513,17 @@ func (c *kvCache) freeAll() {
 			kv.Free()
 		}
 	}
+	freeCacheSet(c.draftCaches)
 }
 
 func (c *kvCache) minCacheOffset() int {
+	return minCacheOffset(c.caches)
+}
+
+func minCacheOffset(caches []cache.Cache) int {
 	offset := 0
 	found := false
-	for _, kv := range c.caches {
+	for _, kv := range caches {
 		if kv == nil {
 			continue
 		}
@@ -434,11 +543,13 @@ func (s *cacheSession) close() {
 	}
 
 	arrays := make([]*mlx.Array, 0, 2*len(s.caches))
-	for _, kv := range s.caches {
-		if kv == nil {
-			continue
+	for _, cacheSet := range [][]cache.Cache{s.caches, s.draftCaches} {
+		for _, kv := range cacheSet {
+			if kv == nil {
+				continue
+			}
+			arrays = append(arrays, kv.State()...)
 		}
-		arrays = append(arrays, kv.State()...)
 	}
 
 	// Ensure that if we have run the forward pass and set the metadata
@@ -503,7 +614,7 @@ func (c *kvCache) evictNode(node *trieNode) {
 		// Interior node with one child: merge with child.
 		before := c.pagedOutBytes
 		tokens := len(node.tokens)
-		mergeWithChild(node, c.caches, &c.pagedOutBytes)
+		mergeWithChild(node, c.caches, &c.pagedOutBytes, c.draftCaches)
 		slog.Debug("evicting interior node", "offset", node.startOffset(), "tokens", tokens, "freed", mlx.PrettyBytes(int(before-c.pagedOutBytes)))
 	} else {
 		panic("evictNode called on multi-child branch point")
