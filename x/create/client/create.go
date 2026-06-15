@@ -660,9 +660,11 @@ func supportsThinking(modelDir string) bool {
 
 	// Check architectures that support thinking
 	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"qwen3",    // Qwen3 models
+		"glm4moe",   // GLM-4 MoE models
+		"deepseek",  // DeepSeek models
+		"exaone4_5", // EXAONE 4.5 models
+		"exaone4",   // EXAONE 4.0 models
+		"qwen3",     // Qwen3 models
 	}
 
 	// Check the architecture list
@@ -757,6 +759,12 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
+		if strings.Contains(archLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(archLower, "exaone") {
+			return "exaone4"
+		}
 	}
 
 	// Also check model_type
@@ -776,6 +784,12 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
+		}
+		if strings.Contains(typeLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(typeLower, "exaone") {
+			return "exaone4"
 		}
 	}
 
@@ -817,6 +831,12 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3-coder"
 		}
+		if strings.Contains(archLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(archLower, "exaone") {
+			return "exaone4"
+		}
 	}
 
 	// Also check model_type
@@ -836,6 +856,12 @@ func getRendererName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3-coder"
+		}
+		if strings.Contains(typeLower, "exaone4_5") {
+			return "exaone4_5"
+		}
+		if strings.Contains(typeLower, "exaone") {
+			return "exaone4"
 		}
 	}
 

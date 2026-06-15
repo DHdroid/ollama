@@ -507,6 +507,23 @@ func TestCreateDraftSafetensorsLayersPrefixesTensorsAndConfigs(t *testing.T) {
 	}
 }
 
+func TestExaone45ImportTransformSkipsNonTextTensors(t *testing.T) {
+	tform := exaone45ImportTransform{}
+
+	if !tform.skipTensor("mtp.fc.weight") {
+		t.Fatal("EXAONE 4.5 import transform did not skip MTP tensor")
+	}
+	if !tform.skipTensor("mtp.layers.0.self_attn.q_proj.weight") {
+		t.Fatal("EXAONE 4.5 import transform did not skip MTP layer tensor")
+	}
+	if !tform.skipTensor("model.visual.blocks.0.attn.q_proj.weight") {
+		t.Fatal("EXAONE 4.5 import transform did not skip model.visual tensor")
+	}
+	if !tform.skipTensor("visual.blocks.0.attn.q_proj.weight") {
+		t.Fatal("EXAONE 4.5 import transform did not skip visual tensor")
+	}
+}
+
 func TestCreateDraftSafetensorsLayersQuantizesEligibleTensors(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
