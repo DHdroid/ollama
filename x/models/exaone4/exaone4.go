@@ -42,6 +42,7 @@ type Config struct {
 	RMSNormEps            float32         `json:"rms_norm_eps"`
 	RopeTheta             float32         `json:"rope_theta"`
 	RopeParameters        *RopeParameters `json:"rope_parameters"`
+	RopeScaling           *RopeParameters `json:"rope_scaling"`
 	SlidingWindow         int32           `json:"sliding_window"`
 	SlidingWindowPattern  string          `json:"sliding_window_pattern"`
 	LayerTypes            []string        `json:"layer_types"`
@@ -136,11 +137,27 @@ func FinalizeConfig(cfg Config) (Config, error) {
 	if cfg.RMSNormEps == 0 {
 		cfg.RMSNormEps = 1e-5
 	}
+	if cfg.RopeParameters == nil {
+		cfg.RopeParameters = cfg.RopeScaling
+	}
+	if cfg.RopeParameters == nil {
+		return Config{}, fmt.Errorf("missing rope_parameters or rope_scaling")
+	}
 	if cfg.RopeParameters != nil && cfg.RopeParameters.RopeTheta > 0 {
 		cfg.RopeTheta = cfg.RopeParameters.RopeTheta
 	}
+	ropeType := cfg.RopeParameters.RopeType
+	if ropeType == "" {
+		ropeType = cfg.RopeParameters.Type
+	}
+	if ropeType == "" {
+		return Config{}, fmt.Errorf("missing rope type in rope_parameters or rope_scaling")
+	}
+	if strings.EqualFold(ropeType, "llama3") && cfg.RopeParameters.Factor <= 1 {
+		return Config{}, fmt.Errorf("invalid llama3 rope factor: %v", cfg.RopeParameters.Factor)
+	}
 	if cfg.RopeTheta == 0 {
-		cfg.RopeTheta = 1000000
+		return Config{}, fmt.Errorf("missing rope_theta")
 	}
 	if cfg.MaxPositionEmbeddings <= 0 {
 		cfg.MaxPositionEmbeddings = 8192
