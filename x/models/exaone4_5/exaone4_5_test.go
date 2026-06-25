@@ -38,7 +38,14 @@ func TestParseTextConfig(t *testing.T) {
 				"sliding_attention", "sliding_attention", "sliding_attention", "full_attention",
 				"sliding_attention", "sliding_attention", "sliding_attention", "full_attention"
 			],
-			"rope_theta": 1000000
+			"rope_theta": 1000000,
+			"rope_scaling": {
+				"factor": 16.0,
+				"high_freq_factor": 4.0,
+				"low_freq_factor": 1.0,
+				"original_max_position_embeddings": 8192,
+				"rope_type": "llama3"
+			}
 		}
 	}`))
 	if err != nil {
@@ -65,6 +72,19 @@ func TestParseTextConfig(t *testing.T) {
 	}
 	if cfg.RopeTheta != 1000000 {
 		t.Fatalf("RopeTheta = %v, want 1000000", cfg.RopeTheta)
+	}
+	if cfg.RopeParameters == nil {
+		t.Fatal("RopeParameters was not populated")
+	}
+	if cfg.RopeScaling == nil {
+		t.Fatal("RopeScaling was not populated")
+	}
+	if cfg.RopeParameters != cfg.RopeScaling {
+		t.Fatal("RopeParameters does not reference RopeScaling")
+	}
+	cfg.BuildRopeFreqs()
+	if cfg.RopeFreqs == nil {
+		t.Fatal("RopeFreqs was not built")
 	}
 }
 
